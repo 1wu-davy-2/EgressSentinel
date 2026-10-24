@@ -312,6 +312,18 @@ def setup(
             else:
                 for entry in entries:
                     console.print(f"[green]已创建计划任务[/green] {entry.key}")
+        # 安装即守护：全部监控默认开启，setup 末步默认立即后台启动审计代理
+        if confirm("立即启动审计代理（后台常驻；aaa status 查看 / aaa teardown 停止）？"):
+            try:
+                proc = autostart_mod.spawn_run_now(paths.data_dir)
+            except OSError as exc:
+                hint = "aaa run"
+                err_console.print(f"[red]后台启动失败：{exc}[/red]（可手动前台运行 {hint}）")
+            else:
+                console.print(
+                    f"[green]审计代理已后台启动[/green] pid={proc.pid}"
+                    "（五维规则全量监控中；日志 data/autostart.log）"
+                )
 
 
 @setup_app.command("ca")

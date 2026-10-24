@@ -78,14 +78,24 @@ class AuditPipeline:
         self._seen_hosts: set[str] = set()
         self._windows: dict[tuple[str, str], deque[float]] = {}
         self.evaluations = 0
+        self._last_policy_version: str | None = None
 
     # ------------------------------------------------------------------ 入口
 
     @property
     def policy(self) -> PolicyDocument:
         """当前策略（顺带做 mtime 轮询，loader 内部限频 2s）。"""
-        self.loader.maybe_reload()
-        return self.loader.current
+        changed = self.loader.maybe_reload()
+        doc = self.loader.current
+        # 热更新生效可见：版本变化写一条日志（run 控制台/autostart.log 均可见）
+        if changed and self._last_policy_version is not None:
+            logger.info(
+                "策略已热更新：%s → %s（无需重启，即刻生效）",
+                self._last_policy_version,
+                doc.policy_version,
+            )
+        self._last_policy_version = doc.policy_version
+        return doc
 
     def evaluate(self, inp: EvaluationInput) -> EvaluationResult:
         """五维求值；任何维度异常按 fail_open 配置放行或阻断。"""

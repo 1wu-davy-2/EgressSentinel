@@ -59,6 +59,7 @@
     {"@type": "Question", "name": "为什么某个 AI Agent 的流量没被捕获？", "acceptedAnswer": {"@type": "Answer", "text": "Node.js 系工具默认不读系统代理和 Windows 证书库。执行 aaa setup env（注入 NODE_USE_ENV_PROXY / NODE_EXTRA_CA_CERTS 等）并重启该 Agent 进程即可；Python 系对应 REQUESTS_CA_BUNDLE。"}},
     {"@type": "Question", "name": "它会拖慢我的网络吗？", "acceptedAnswer": {"@type": "Answer", "text": "regular 模式是本地回环代理，无云端往返；内容扫描默认只处理每个请求的前 256KB；非审计目标域名跳过 body 扫描。"}},
     {"@type": "Question", "name": "杀毒软件报警了怎么办？", "acceptedAnswer": {"@type": "Answer", "text": "本地代理 + 安装根证书对应 MITRE ATT&CK T1553.004，属预期行为。regular 模式不加载任何驱动；本工具不隐藏自身行为，并提供完整卸载。"}},
+    {"@type": "Question", "name": "突然关机后开机会断网吗？", "acceptedAnswer": {"@type": "Answer", "text": "不会。关机/注销时代理 4 秒内优雅收尾；开机计划任务自动拉起代理；若自启失败，登录 30 秒后 watchdog 自动还原代理设置与相关环境变量，网络立刻恢复。"}},
     {"@type": "Question", "name": "如何完全卸载？", "acceptedAnswer": {"@type": "Answer", "text": "一条命令 aaa teardown：按改动日志逆序幂等还原——删除 CA（按序列号精确匹配）、还原系统代理设置、清理全部环境变量；崩溃后重启执行仍完整还原。"}},
     {"@type": "Question", "name": "支持 Linux / macOS 吗？", "acceptedAnswer": {"@type": "Answer", "text": "v0.1.0 已发布五平台单文件可执行（Linux amd64/arm64、macOS amd64/arm64、Windows amd64）。Windows 是一等平台；Linux/macOS 的进程归因依赖特权会话。"}}
   ]
@@ -366,7 +367,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
 <header class="hero" id="top">
   <div class="wrap">
     <div class="hero-badge">
-      <span class="pill"><span class="dot"></span><span data-i18n="hero.badge">🎉 v0.1.1 正式发布 · 五平台可执行文件已上线</span></span>
+      <span class="pill"><span class="dot"></span><span data-i18n="hero.badge">🎉 v0.1.2 正式发布 · 五平台可执行文件已上线</span></span>
     </div>
     <h1><span data-i18n="hero.h1a">你的 AI Agent 在往哪里</span><br><span class="grad-text" data-i18n="hero.h1b">发送你的代码？</span></h1>
     <p class="sub" data-i18n="hero.sub"><b>EgressSentinel（出口哨兵）</b>是部署在本机的 AI Agent 外发流量审计代理：还原<b>任意进程</b>的 HTTPS 请求明文，把每条请求<b>归因到进程</b>，五维规则<b>事中阻断</b>密钥与代码的违规外发——全程本地留痕，不依赖应用自愿接入。</p>
@@ -380,7 +381,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
     <div class="term">
       <div class="term-bar">
         <i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i>
-        <span class="t mono" data-i18n="term.title">aaa run — EgressSentinel v0.1.1 · mode=dry-run</span>
+        <span class="t mono" data-i18n="term.title">aaa run — EgressSentinel v0.1.2 · mode=dry-run</span>
       </div>
       <div class="term-body mono">
         <div class="cmd">aaa run</div>
@@ -439,6 +440,8 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
       <div class="card"><div class="ic">🔐</div><h3 data-i18n="feat.c4t">密钥与代码外泄检测</h3><p data-i18n="feat.c4p">移植 gitleaks 43 条核心规则（AWS/GCP/Azure/OpenAI/私钥头/JWT…）+ PII 识别 + 代码密度/整库上传启发式。</p></div>
       <div class="card"><div class="ic">🚦</div><h3 data-i18n="feat.c5t">四级响应，事中阻断</h3><p data-i18n="feat.c5p">allow / alert / confirm / block。enforce 模式下违规请求被合成 403 拦截——目标服务器根本收不到；出厂默认 dry-run 只告警。</p></div>
       <div class="card"><div class="ic">↩️</div><h3 data-i18n="feat.c6t">完整可逆，本地留痕</h3><p data-i18n="feat.c6p">所有系统改动 journal-first 记录，<code>aaa teardown</code> 幂等还原（崩溃后仍完整还原）；证据仅存本机 SQLite，保留期可配。</p></div>
+      <div class="card"><div class="ic">🚀</div><h3 data-i18n="feat.c7t">安装即守护，全量监控</h3><p data-i18n="feat.c7p">setup 完成即默认后台启动：五维规则与密钥/PII/代码三大扫描器开箱全开，开机自启——无需手动配置、无需重启。</p></div>
+      <div class="card"><div class="ic">🤖</div><h3 data-i18n="feat.c8t">常驻与自愈，杜绝断网</h3><p data-i18n="feat.c8p">关机/注销 4 秒优雅收尾不阻塞系统；开机自启拉起代理；watchdog 检测「代理已启用但进程没跑」自动还原网络——没有 VPN 式开机断网问题。</p></div>
     </div>
   </div>
 </section>
@@ -546,6 +549,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
         <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f2t">dry-run 出厂默认</h4><p data-i18n="qs.f2p">只告警不阻断。观察无误后把策略改为 <code>enforce</code>，违规请求即刻被 403 拦截。</p></div></div>
         <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f3t">Node 系 Agent 也能抓</h4><p data-i18n="qs.f3p">setup 自动下发 <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code> 等变量——Node 默认不读系统代理和证书库，这一步是关键。</p></div></div>
         <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f4t">纯本地，零上传</h4><p data-i18n="qs.f4p">事件库与证据文件只存本机目录，保留期自动清理；没有任何遥测或云端组件。</p></div></div>
+        <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f5t">策略热更新，无需重启</h4><p data-i18n="qs.f5p">编辑 <code>policies/default.yaml</code> 保存后约 2 秒自动生效（dry-run ↔ enforce 同理）；版本变化会写入运行日志，可随时确认当前生效版本。</p></div></div>
       </div>
       <div>
         <div class="codecard">
@@ -629,6 +633,10 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
         <div class="a" data-i18n="faq.a5">目标进程尚未信任本工具的 CA——说明对应运行时的证书环境变量还没下发或进程没重启，按上一条处理；个别自带证书固定（pinning）的程序会持续失败，可加白名单降级为仅元数据审计。</div>
       </details>
       <details>
+        <summary data-i18n="faq.q8">突然关机后开机会「断网」吗？</summary>
+        <div class="a" data-i18n="faq.a8">不会。三层防护：关机/注销时代理 4 秒内优雅收尾（不阻塞系统关机）；开机计划任务自动拉起代理；若自启失败，登录 30 秒后 watchdog 检测到「代理已启用但端口不可达」会自动还原代理设置与相关环境变量（<code>aaa watchdog --fix</code> 也可手动触发），网络立刻恢复。</div>
+      </details>
+      <details>
         <summary data-i18n="faq.q6">如何完全卸载？</summary>
         <div class="a" data-i18n="faq.a6">一条命令：<code>aaa teardown</code>。按改动日志逆序幂等还原——删除 CA（按序列号精确匹配）、还原系统代理设置、清理全部环境变量；即使代理中途崩溃，重启后执行仍能完整还原，重复执行无副作用。</div>
       </details>
@@ -644,7 +652,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
 <section>
   <div class="wrap">
     <div class="cta-box">
-      <span class="pill" style="margin-bottom:20px"><span class="dot"></span><span data-i18n="cta.badge">v0.1.1 · 五平台可执行文件</span></span>
+      <span class="pill" style="margin-bottom:20px"><span class="dot"></span><span data-i18n="cta.badge">v0.1.2 · 五平台可执行文件</span></span>
       <h2><span data-i18n="cta.h2a">准备好看清你的</span><span class="grad-text" data-i18n="cta.h2b">出口流量</span><span data-i18n="cta.h2c">了吗？</span></h2>
       <p data-i18n="cta.p">下载 EgressSentinel，五分钟开始审计你的 AI Agent 与任意应用</p>
       <div class="hero-cta">
@@ -723,7 +731,7 @@ var I18N_EN = {
   "nav.why": "Why", "nav.features": "Features", "nav.choice": "Comparison", "nav.ui": "Interface",
   "nav.quickstart": "Quick Start", "nav.faq": "FAQ", "nav.download": "Free Download",
   "nav.features2": "Features", "nav.choice2": "Comparison",
-  "hero.badge": "🎉 v0.1.1 released · executables for 5 platforms",
+  "hero.badge": "🎉 v0.1.2 released · executables for 5 platforms",
   "hero.h1a": "Where is your AI agent",
   "hero.h1b": "sending your code?",
   "hero.sub": "<b>EgressSentinel</b> is a local audit proxy for AI agents: it decrypts the HTTPS traffic of <b>any process</b>, attributes every request to its <b>source process</b>, and <b>blocks in-flight</b> secret and code exfiltration with a five-dimension ruleset — fully logged locally, no opt-in from apps required.",
@@ -734,7 +742,7 @@ var I18N_EN = {
   "cta.dl2": "⬇ Download Now",
   "cta.platform": "Windows · Linux · macOS (amd64 / arm64) · or install via pip",
   "hero.platform": "Windows 10/11 (first-class) · Linux · macOS · amd64 / arm64",
-  "term.title": "aaa run — EgressSentinel v0.1.1 · mode=dry-run",
+  "term.title": "aaa run — EgressSentinel v0.1.2 · mode=dry-run",
   "term.engine": "[engine] regular proxy on 127.0.0.1:8080 · attributor ready · policy default.yaml (dry-run)",
   "term.ev1": "known_ai_api · allowed · logged", "term.ev2": "domain-unknown first-seen alert",
   "term.ev3": "secret-leak matched AKIA**** · blocked with 403",
@@ -758,6 +766,8 @@ var I18N_EN = {
   "feat.c4t": "Secret & code leak detection", "feat.c4p": "43 core rules ported from gitleaks (AWS/GCP/Azure/OpenAI/private keys/JWT…) plus PII detection and code-density / bulk-upload heuristics.",
   "feat.c5t": "Four-level verdicts, blocked in flight", "feat.c5p": "allow / alert / confirm / block. Under enforce, violating requests get a synthetic 403 — the destination server never receives them; dry-run (alert-only) is the factory default.",
   "feat.c6t": "Fully reversible, local evidence", "feat.c6p": "Every system change is journaled; <code>aaa teardown</code> restores everything idempotently (even after a crash). Evidence stays in local SQLite with configurable retention.",
+  "feat.c7t": "Guarding from install, full monitoring", "feat.c7p": "Setup finishes and the proxy starts in the background by default: all five rule dimensions and the secrets/PII/code scanners on out of the box, with autostart — no manual config, no reboot.",
+  "feat.c8t": "Always-on & self-healing, no dead network", "feat.c8p": "Graceful 4-second shutdown on power-off/logoff (never blocks the OS); autostart brings the proxy back on boot; a watchdog detects \"proxy enabled but process dead\" and restores your network automatically — no VPN-style dead network after reboot.",
   "cmp.eyebrow": "Comparison", "cmp.h2": "Why this architecture?",
   "cmp.p": "The research covered eBPF, WFP, ETW, TUN and enterprise DLP (see docs/01 in the repo). The summary:",
   "cmp.f1": "Capability", "cmp.f2": "LLM gateway", "cmp.f3": "Process firewall", "cmp.f5": "Enterprise DLP",
@@ -791,6 +801,7 @@ var I18N_EN = {
   "qs.f2t": "dry-run by default", "qs.f2p": "Alert-only out of the box. Once you trust the rules, switch the policy to <code>enforce</code> and violations get 403-blocked instantly.",
   "qs.f3t": "Captures Node-based agents too", "qs.f3p": "setup injects <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code> — Node ignores the system proxy and cert store by default, so this step is essential.",
   "qs.f4t": "Local only, zero upload", "qs.f4p": "The event store and evidence files stay in a local directory with automatic retention cleanup; no telemetry, no cloud components.",
+  "qs.f5t": "Hot-reloaded policy, no restart", "qs.f5p": "Save <code>policies/default.yaml</code> and it takes effect in about 2 seconds (dry-run ↔ enforce included); version changes are written to the run log so you can always confirm what's live.",
   "qs.code1": "<span class=\"c\"># 1. preview system changes (recommended first step)</span>\n<span class=\"h\">aaa</span> setup --dry-run\n<span class=\"c\"># 2. deploy CA / proxy / env vars (step-by-step confirm)</span>\n<span class=\"h\">aaa</span> setup\n<span class=\"c\"># 3. start the audit proxy (Ctrl+C to stop gracefully)</span>\n<span class=\"h\">aaa</span> run\n<span class=\"c\"># 4. open the dashboard http://127.0.0.1:8787</span>\n<span class=\"h\">aaa</span> web",
   "qs.code2": "<span class=\"k\">version</span>: <span class=\"v\">1</span>\n<span class=\"k\">mode</span>: <span class=\"s\">dry-run</span>   <span class=\"c\"># alert-only by default; switch to enforce to block</span>\n<span class=\"k\">content</span>:\n  <span class=\"k\">scanners</span>: [<span class=\"s\">secrets</span>, <span class=\"s\">pii</span>, <span class=\"s\">code_leak</span>]\n  <span class=\"k\">rules</span>:\n    - { <span class=\"k\">id</span>: <span class=\"s\">secret-leak</span>, <span class=\"k\">scanner</span>: <span class=\"s\">secrets</span>, <span class=\"k\">action</span>: <span class=\"s\">block</span> }",
   "btn.copy": "Copy", "btn.copy2": "Copy", "btn.copied": "Copied",
@@ -809,6 +820,8 @@ var I18N_EN = {
   "faq.a4": "A local proxy plus an installed root certificate maps to MITRE ATT&amp;CK T1553.004 — expected behavior that EDR products may detect. regular mode loads no drivers; the tool never hides itself and offers a complete uninstall. Make sure you installed it yourself on purpose.",
   "faq.q5": "What does CERTIFICATE_VERIFY_FAILED mean?",
   "faq.a5": "The target process doesn't trust this tool's CA yet — the runtime's certificate env var wasn't deployed, or the process wasn't restarted. See the previous answer. A few pinning-enabled programs will keep failing; whitelist them to degrade to metadata-only auditing.",
+  "faq.q8": "Will my network break after a sudden power-off?",
+  "faq.a8": "No. Three layers: on shutdown/logoff the proxy winds down gracefully within 4 seconds (never blocking the OS); a scheduled task brings the proxy back at logon; and if autostart fails, a watchdog detects \"proxy enabled but port unreachable\" 30 seconds after login and automatically restores proxy settings and related env vars (<code>aaa watchdog --fix</code> works manually too) — your network recovers immediately.",
   "faq.q6": "How do I uninstall completely?",
   "faq.a6": "One command: <code>aaa teardown</code>. It restores everything in reverse journal order — removes the CA (matched by exact serial), restores proxy settings, cleans all env vars; even after a crash a rerun completes the restore. Idempotent: repeat runs are no-ops.",
   "faq.q7": "Does it support Linux / macOS?",

@@ -302,6 +302,26 @@ def test_full_scenario_setup_capture_clients_enforce_teardown(
         ca_mod, "uninstall_cert", lambda store, serial, **_kw: uninstalled.append(serial)
     )
 
+    # v0.1.2：setup --yes 默认附装自启并立即启动——测试注入假实现（红线：绝不真建任务/起进程）
+    from aaa.setup import autostart as autostart_fake
+
+    autostart_offered: list[str] = []
+    launched: list[Path] = []
+
+    class _FakeProc:  # 供 CLI 打印 pid
+        pid = 424242
+
+    def _fake_enable(state, data_dir):  # noqa: ANN001
+        autostart_offered.append(str(data_dir))
+        return []
+
+    def _fake_spawn(data_dir, **_kw):  # noqa: ANN001
+        launched.append(data_dir)
+        return _FakeProc()
+
+    monkeypatch.setattr(autostart_fake, "enable_autostart", _fake_enable)
+    monkeypatch.setattr(autostart_fake, "spawn_run_now", _fake_spawn)
+
     fixture_port = https_fixture_server.server_address[1]
     base = f"https://127.0.0.1:{fixture_port}"
 
@@ -320,6 +340,9 @@ def test_full_scenario_setup_capture_clients_enforce_teardown(
     kinds = [entry.kind for entry in state_entries]
     assert kinds.count("env_var") == 8 and kinds.count("wininet_proxy") == 1
     assert kinds.count("ca_cert_user") == 1 and kinds.count("file_created") == 1
+    # v0.1.2 默认行为：安装即守护（自启任务 + 立即后台启动，均为假实现）
+    assert len(autostart_offered) == 1 and autostart_offered[0] == str(data_dir)
+    assert launched == [data_dir]
 
     # ---- 第 2 步：mitmproxy regular + 本地 HTTPS "AI 端点" fixture ----
     policy_dry = _write_policy(tmp_path / "policy-dry-run.yaml", "dry-run")

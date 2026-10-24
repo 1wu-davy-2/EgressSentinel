@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -187,6 +188,29 @@ def disable_autostart(state: StateFile) -> list[str]:
         if state.drop(kind, name):
             removed.append(name)
     return removed
+
+
+def spawn_run_now(
+    data_dir: Path,
+    *,
+    _popen=subprocess.Popen,  # type: ignore[assignment]
+) -> subprocess.Popen[str]:
+    """立即后台启动 ``aaa run``（与开机自启同一命令行：pythonw/最小化 + --log-file）。
+
+    Windows 用 DETACHED_PROCESS 脱离当前控制台（关掉终端代理仍在跑）；
+    测试经 ``_popen`` 注入假实现，绝不真起进程。
+    """
+    command, args = autostart_command(data_dir)
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+    return _popen(
+        [command, *args],
+        creationflags=creationflags,
+        close_fds=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
 
 
 def restore_scheduled_task(state: StateFile, entry: StateEntry) -> None:
