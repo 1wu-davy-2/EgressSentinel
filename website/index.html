@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EgressSentinel（出口哨兵）· Windows 本机 AI Agent 外发流量审计</title>
+<meta name="description" content="部署在 Windows 本机的 AI Agent 外发流量审计代理：还原任意进程外发的 HTTPS 明文、归因到进程、按五维规则事中阻断，全程本地留痕。">
+<style>
+  :root{
+    --bg:#070b14;
+    --bg-soft:#0c1220;
+    --panel:rgba(255,255,255,.035);
+    --panel-strong:rgba(255,255,255,.06);
+    --border:rgba(148,163,184,.18);
+    --border-strong:rgba(148,163,184,.32);
+    --text:#e2e8f0;
+    --muted:#94a3b8;
+    --faint:#64748b;
+    --cyan:#22d3ee;
+    --violet:#a78bfa;
+    --green:#34d399;
+    --amber:#fbbf24;
+    --red:#f87171;
+    --mono:ui-monospace,"Cascadia Code",Consolas,"JetBrains Mono","SFMono-Regular",Menlo,monospace;
+    --sans:"Segoe UI",system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth;scroll-padding-top:76px}
+  body{
+    background:var(--bg);color:var(--text);font-family:var(--sans);
+    line-height:1.7;font-size:16px;overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;
+    background:
+      radial-gradient(720px 420px at 15% -5%, rgba(34,211,238,.13), transparent 60%),
+      radial-gradient(820px 480px at 85% 0%, rgba(167,139,250,.11), transparent 60%),
+      radial-gradient(900px 600px at 50% 110%, rgba(52,211,153,.05), transparent 60%);
+  }
+  a{color:var(--cyan);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.9em}
+
+  /* ---------- 导航 ---------- */
+  nav{
+    position:fixed;top:0;left:0;right:0;z-index:50;
+    background:rgba(7,11,20,.78);backdrop-filter:blur(12px);
+    border-bottom:1px solid var(--border);
+  }
+  .nav-inner{
+    max-width:1120px;margin:0 auto;padding:0 24px;height:60px;
+    display:flex;align-items:center;gap:20px;
+  }
+  .brand{display:flex;align-items:center;gap:10px;font-weight:700;color:var(--text);white-space:nowrap}
+  .brand:hover{text-decoration:none}
+  .brand .logo{
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.08em;
+    border:1px solid rgba(34,211,238,.5);color:var(--cyan);
+    padding:3px 8px;border-radius:8px;background:rgba(34,211,238,.08);
+  }
+  .nav-links{display:flex;gap:4px;margin-left:auto;overflow-x:auto;scrollbar-width:none}
+  .nav-links::-webkit-scrollbar{display:none}
+  .nav-links a{
+    color:var(--muted);font-size:.86rem;padding:6px 11px;border-radius:8px;white-space:nowrap;
+  }
+  .nav-links a:hover{color:var(--text);background:var(--panel-strong);text-decoration:none}
+  .nav-links a.active{color:var(--cyan);background:rgba(34,211,238,.1)}
+
+  /* ---------- 布局 ---------- */
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  section{padding:88px 0 20px}
+  .kicker{
+    font-family:var(--mono);font-size:.74rem;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--cyan);margin-bottom:10px;
+  }
+  h2{font-size:clamp(1.5rem,3.4vw,2.1rem);line-height:1.3;margin-bottom:14px;letter-spacing:-.01em}
+  .sec-desc{color:var(--muted);max-width:760px;margin-bottom:36px}
+
+  /* ---------- Hero ---------- */
+  header.hero{padding:150px 0 70px;text-align:center}
+  .hero-badge{
+    display:inline-flex;align-items:center;gap:8px;
+    font-family:var(--mono);font-size:.76rem;color:var(--muted);
+    border:1px solid var(--border);border-radius:999px;padding:6px 14px;margin-bottom:26px;
+    background:var(--panel);
+  }
+  .hero-badge .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+  h1{
+    font-size:clamp(2.1rem,6vw,3.7rem);line-height:1.15;letter-spacing:-.02em;
+    margin-bottom:20px;font-weight:800;
+  }
+  h1 .grad{
+    background:linear-gradient(92deg,var(--cyan) 10%,var(--violet) 90%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .hero-sub{color:var(--muted);font-size:clamp(1rem,2vw,1.16rem);max-width:720px;margin:0 auto 34px}
+  .hero-sub b{color:var(--text);font-weight:600}
+  .hero-cta{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-bottom:54px}
+  .btn{
+    display:inline-block;padding:11px 24px;border-radius:10px;font-size:.94rem;font-weight:600;
+    border:1px solid var(--border-strong);color:var(--text);background:var(--panel-strong);
+    font-family:var(--mono);
+  }
+  .btn:hover{text-decoration:none;border-color:var(--cyan);color:var(--cyan)}
+  .btn.primary{
+    background:linear-gradient(92deg,rgba(34,211,238,.16),rgba(167,139,250,.16));
+    border-color:rgba(34,211,238,.55);color:var(--cyan);
+  }
+  .btn.primary:hover{border-color:var(--cyan);box-shadow:0 0 24px rgba(34,211,238,.18)}
+  .stats{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:14px;max-width:880px;margin:0 auto;
+  }
+  .stat{
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:22px 12px 18px;
+  }
+  .stat .num{
+    font-family:var(--mono);font-size:clamp(1.6rem,3.4vw,2.2rem);font-weight:700;
+    background:linear-gradient(92deg,var(--cyan),var(--violet));
+    -webkit-background-clip:text;background-clip:text;color:transparent;line-height:1.2;
+  }
+  .stat .lbl{font-size:.82rem;color:var(--muted);margin-top:4px}
+  .stat .hint{font-size:.72rem;color:var(--faint);margin-top:2px;font-family:var(--mono)}
+
+  /* ---------- 通用卡片 ---------- */
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .card{
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:22px;transition:border-color .2s,transform .2s;
+  }
+  .card:hover{border-color:var(--border-strong);transform:translateY(-2px)}
+  .card h3{font-size:1.02rem;margin-bottom:8px}
+  .card p{color:var(--muted);font-size:.9rem}
+  .card .ico{font-size:1.4rem;margin-bottom:10px;display:block}
+  .card .tag{
+    display:inline-block;font-family:var(--mono);font-size:.7rem;color:var(--cyan);
+    border:1px solid rgba(34,211,238,.4);border-radius:6px;padding:1px 7px;margin-bottom:10px;
+    background:rgba(34,211,238,.07);
+  }
+  .card.warn h3{color:var(--amber)}
+  .card.bad h3{color:var(--red)}
+
+  /* ---------- 代码块 ---------- */
+  .codewin{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#0a0f1c;margin:18px 0}
+  .codewin .bar{
+    display:flex;align-items:center;gap:8px;padding:9px 14px;
+    border-bottom:1px solid var(--border);background:rgba(255,255,255,.03);
+  }
+  .codewin .bar .d{width:10px;height:10px;border-radius:50%}
+  .codewin .bar .name{font-family:var(--mono);font-size:.74rem;color:var(--faint);margin-left:6px}
+  .codewin .bar .copy{
+    margin-left:auto;font-family:var(--mono);font-size:.72rem;color:var(--muted);
+    border:1px solid var(--border);background:transparent;border-radius:6px;
+    padding:2px 10px;cursor:pointer;
+  }
+  .codewin .bar .copy:hover{color:var(--cyan);border-color:var(--cyan)}
+  pre{
+    padding:16px 18px;overflow-x:auto;font-family:var(--mono);
+    font-size:.83rem;line-height:1.75;color:#cbd5e1;
+  }
+  pre .c{color:#5b6b84}
+  pre .p{color:var(--cyan)}
+  pre .k{color:var(--violet)}
+  pre .g{color:var(--green)}
+  pre .y{color:var(--amber)}
+
+  /* ---------- 流程图（纯 CSS 盒子 + 箭头） ---------- */
+  .diagram{
+    background:var(--panel);border:1px solid var(--border);border-radius:16px;
+    padding:34px 26px;margin:10px 0 26px;
+  }
+  .dnode{
+    background:var(--bg-soft);border:1px solid var(--border-strong);border-radius:10px;
+    padding:12px 16px;text-align:center;min-width:0;
+  }
+  .dnode .t{font-weight:600;font-size:.92rem}
+  .dnode .s{font-size:.76rem;color:var(--muted);font-family:var(--mono)}
+  .dnode.src{border-color:rgba(148,163,184,.4)}
+  .dnode.engine{
+    border-color:rgba(34,211,238,.55);background:rgba(34,211,238,.06);
+    box-shadow:0 0 26px rgba(34,211,238,.08);
+  }
+  .dnode.out{border-color:rgba(167,139,250,.45)}
+  .dnode.action-block{border-color:rgba(248,113,113,.5)}
+  .drow{display:grid;gap:14px}
+  .drow.c2{grid-template-columns:1fr 1fr}
+  .drow.c3{grid-template-columns:1fr 1fr 1fr}
+  .drow.pipe{display:flex;align-items:stretch;gap:0;flex-wrap:nowrap}
+  .drow.pipe .dnode{flex:1;display:flex;flex-direction:column;justify-content:center}
+  .parrow{flex:0 0 34px;display:flex;align-items:center;justify-content:center;position:relative}
+  .parrow::before{content:"";height:2px;width:100%;background:linear-gradient(90deg,var(--border-strong),var(--cyan))}
+  .parrow::after{
+    content:"";position:absolute;right:2px;width:0;height:0;
+    border:5px solid transparent;border-left-color:var(--cyan);
+  }
+  .varrow{width:2px;height:30px;margin:6px auto;background:linear-gradient(180deg,var(--border-strong),var(--cyan));position:relative}
+  .varrow::after{
+    content:"";position:absolute;bottom:-1px;left:50%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:var(--cyan);
+  }
+  .vlabel{
+    text-align:center;font-family:var(--mono);font-size:.72rem;color:var(--faint);
+    margin:2px 0 0;letter-spacing:.06em;
+  }
+  .dlabel{
+    font-family:var(--mono);font-size:.74rem;color:var(--faint);letter-spacing:.14em;
+    text-transform:uppercase;text-align:center;margin-bottom:10px;
+  }
+  .modes .dnode{padding:16px}
+  .modes .dnode.regular{border-color:rgba(34,211,238,.5)}
+  .modes .dnode.local{border-color:rgba(167,139,250,.5)}
+  .modes .pill{
+    display:inline-block;font-family:var(--mono);font-size:.68rem;border-radius:6px;
+    padding:1px 8px;margin-bottom:8px;
+  }
+  .modes .regular .pill{color:var(--cyan);border:1px solid rgba(34,211,238,.45);background:rgba(34,211,238,.08)}
+  .modes .local .pill{color:var(--violet);border:1px solid rgba(167,139,250,.45);background:rgba(167,139,250,.08)}
+  .diagram .footnote{
+    margin-top:26px;font-size:.78rem;color:var(--faint);border-top:1px dashed var(--border);
+    padding-top:14px;
+  }
+  .diagram .footnote b{color:var(--muted);font-weight:600}
+
+  /* ---------- 对比表 ---------- */
+  .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:14px;background:var(--panel)}
+  table{border-collapse:collapse;width:100%;min-width:760px;font-size:.87rem}
+  th,td{padding:13px 16px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+  thead th{
+    font-size:.8rem;color:var(--muted);font-weight:600;white-space:nowrap;
+    background:rgba(255,255,255,.03);
+  }
+  tbody tr:last-child td{border-bottom:none}
+  td.dim{color:var(--text);font-weight:600;white-space:nowrap}
+  td .note{display:block;font-size:.74rem;color:var(--faint);font-weight:400;margin-top:2px}
+  .col-us{background:rgba(34,211,238,.07)}
+  thead th.col-us{color:var(--cyan);border-bottom:2px solid rgba(34,211,238,.5)}
+  .ok{color:var(--green);font-weight:600}
+  .warn{color:var(--amber);font-weight:600}
+  .no{color:var(--red);font-weight:600}
+
+  /* ---------- 五维 ---------- */
+  .dim-card{position:relative;overflow:hidden}
+  .dim-card .no{
+    position:absolute;top:-14px;right:6px;font-family:var(--mono);font-size:3.4rem;font-weight:800;
+    color:rgba(148,163,184,.09);line-height:1;
+  }
+  .dim-card ul{list-style:none;margin-top:10px}
+  .dim-card li{
+    font-size:.8rem;color:var(--muted);padding:3px 0 3px 16px;position:relative;
+  }
+  .dim-card li::before{content:"›";position:absolute;left:0;color:var(--cyan);font-family:var(--mono)}
+  .dim-card li b{color:var(--text);font-weight:600}
+  .dim-card li code{color:var(--violet)}
+
+  /* ---------- 快速开始 ---------- */
+  .steps{counter-reset:step}
+  .step{position:relative;padding-left:56px;margin-bottom:30px}
+  .step::before{
+    counter-increment:step;content:counter(step);
+    position:absolute;left:0;top:0;width:36px;height:36px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--mono);font-weight:700;color:var(--cyan);
+    background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.45);
+  }
+  .step h3{font-size:1.05rem;margin-bottom:4px}
+  .step .desc{color:var(--muted);font-size:.88rem;margin-bottom:10px}
+  .step .codewin{margin-bottom:0}
+
+  /* ---------- 徽标（状态） ---------- */
+  .badge{
+    display:inline-block;font-family:var(--mono);font-size:.7rem;border-radius:6px;
+    padding:2px 9px;margin-left:8px;vertical-align:middle;
+  }
+  .badge.plan{color:var(--amber);border:1px solid rgba(251,191,36,.45);background:rgba(251,191,36,.08)}
+  .badge.none{color:var(--red);border:1px solid rgba(248,113,113,.45);background:rgba(248,113,113,.08)}
+  .badge.part{color:var(--green);border:1px solid rgba(52,211,153,.45);background:rgba(52,211,153,.08)}
+
+  /* ---------- 合规 ---------- */
+  .comp-card{border-left:3px solid var(--amber)}
+  .comp-card.c-green{border-left-color:var(--green)}
+  .comp-card.c-cyan{border-left-color:var(--cyan)}
+  .comp-card.c-red{border-left-color:var(--red)}
+
+  /* ---------- 页脚 ---------- */
+  footer{
+    margin-top:90px;border-top:1px solid var(--border);
+    background:rgba(255,255,255,.02);padding:44px 0 36px;
+  }
+  .foot-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:32px}
+  footer h4{font-size:.85rem;color:var(--text);margin-bottom:12px;font-family:var(--mono)}
+  footer p,footer li{font-size:.82rem;color:var(--muted)}
+  footer ul{list-style:none}
+  footer li{padding:3px 0;font-family:var(--mono)}
+  footer li a{color:var(--muted)}
+  footer li a:hover{color:var(--cyan)}
+  .foot-note{
+    margin-top:30px;padding-top:18px;border-top:1px dashed var(--border);
+    font-size:.76rem;color:var(--faint);font-family:var(--mono);line-height:1.8;
+  }
+
+  /* ---------- 响应式 ---------- */
+  @media (max-width:900px){
+    .g4{grid-template-columns:repeat(2,1fr)}
+    .g3{grid-template-columns:repeat(2,1fr)}
+    .drow.pipe{flex-direction:column;gap:0}
+    .parrow{flex:0 0 30px;transform:rotate(90deg)}
+    .drow.c2,.drow.c3{grid-template-columns:1fr}
+  }
+  @media (max-width:640px){
+    section{padding:70px 0 14px}
+    header.hero{padding:120px 0 50px}
+    .stats{grid-template-columns:repeat(2,1fr)}
+    .g3,.g4,.g2{grid-template-columns:1fr}
+    .foot-grid{grid-template-columns:1fr}
+    .step{padding-left:48px}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a class="brand" href="#top"><span class="logo">ES</span>EgressSentinel</a>
+    <div class="nav-links">
+      <a href="#why">为什么需要</a>
+      <a href="#how">工作原理</a>
+      <a href="#choice">架构对比</a>
+      <a href="#features">核心能力</a>
+      <a href="#quickstart">快速开始</a>
+      <a href="#roadmap">路线图</a>
+      <a href="#compliance">合规边界</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ============ 1 · HERO ============ -->
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="hero-badge"><span class="dot"></span>v0.1.0 · Windows 10/11 · Python ≥ 3.11 · 引擎 mitmproxy（MIT）</div>
+    <h1>你的 AI Agent 在往哪里<br><span class="grad">发送你的代码？</span></h1>
+    <p class="hero-sub">
+      <b>EgressSentinel（出口哨兵，原名 AI-AGENT-AUDIT）</b> 是部署在 Windows 本机的 AI Agent 外发流量审计代理：
+      以 MITM 方式还原<b>任意进程</b>外发的 HTTP(S) 明文，把每条请求<b>归因到进程</b>，
+      按五维规则在<b>事中阻断</b>违规外发——全程本地留痕，不依赖应用自愿接入。
+    </p>
+    <div class="hero-cta">
+      <a class="btn primary" href="#quickstart">快速开始 →</a>
+      <a class="btn" href="#how">看看它怎么工作</a>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <div class="num">2</div>
+        <div class="lbl">采集模式</div>
+        <div class="hint">regular / local(WinDivert)</div>
+      </div>
+      <div class="stat">
+        <div class="num">5</div>
+        <div class="lbl">规则维度</div>
+        <div class="hint">域名·进程·内容·体量·时间窗</div>
+      </div>
+      <div class="stat">
+        <div class="num">4</div>
+        <div class="lbl">响应动作</div>
+        <div class="hint">allow &lt; alert &lt; confirm &lt; block</div>
+      </div>
+      <div class="stat">
+        <div class="num">127.0.0.1</div>
+        <div class="lbl">本地面板</div>
+        <div class="hint">仅本地回环 · 无云端依赖</div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ 2 · 为什么需要 ============ -->
+<section id="why">
+  <div class="wrap">
+    <div class="kicker">Problem</div>
+    <h2>为什么需要它</h2>
+    <p class="sec-desc">
+      AI Agent（Claude Code / Cursor / Codex 类 CLI、IDE 插件、MCP 后台服务……）在本机拥有读写代码的权限，
+      但它们外发 HTTPS 请求的内容对你是不可见的。是否存在私自上传代码、泄露密钥与 <code>.env</code>、
+      把敏感文件发给第三方端点——目前没有顺手的审计手段。
+    </p>
+
+    <div class="grid g4">
+      <div class="card">
+        <span class="ico">📦</span>
+        <h3>整库代码上下文外发</h3>
+        <p>Agent 把大段仓库源码作为上下文发给模型 API——超过 512KB 且代码相似度高的请求，正是要拦的形态。</p>
+      </div>
+      <div class="card">
+        <span class="ico">🔑</span>
+        <h3>密钥随 prompt 泄露</h3>
+        <p><code>.env</code>、AWS Key、GitHub Token 出现在请求体里。43 条密钥规则 + 熵检测在加密前所在的明文层命中它。</p>
+      </div>
+      <div class="card">
+        <span class="ico">🕵️</span>
+        <h3>陌生进程连 AI 端点</h3>
+        <p>某个你没见过的后台进程正在访问 <code>api.anthropic.com</code>。进程画像规则会把"非 AI 进程访问 AI 端点"标记出来。</p>
+      </div>
+      <div class="card">
+        <span class="ico">📈</span>
+        <h3>异常频率的外联</h3>
+        <p>60 秒内对同一域名发起 60+ 次请求的突发行为，由滑动时间窗规则捕获告警。</p>
+      </div>
+    </div>
+
+    <p class="sec-desc" style="margin-top:44px">那现有方案为什么解决不了？——它们各自只补了一块拼图：</p>
+    <div class="grid g4">
+      <div class="card bad">
+        <span class="tag">LLM 网关</span>
+        <h3>需要应用"自愿"接入</h3>
+        <p>LiteLLM / Helicone 等要求应用把 base_url 改指向网关。<b>改不了 base_url 的进程完全逃逸</b>——而失控的 Agent 恰恰不会配合。</p>
+      </div>
+      <div class="card bad">
+        <span class="tag">进程防火墙</span>
+        <h3>只有元数据，没有内容</h3>
+        <p>Portmaster / simplewall 能告诉你"哪个进程连了哪个 IP:端口"并阻断连接，<b>但看不到请求内容</b>——密钥就在 body 里，它看不见。</p>
+      </div>
+      <div class="card bad">
+        <span class="tag">eBPF 抓取</span>
+        <h3>Windows 上不可用</h3>
+        <p>eCapture 等在内核挂 <code>SSL_write</code> 取明文，但官方明言<b>不支持 Windows</b>（仅 Linux/Android）；ebpf-for-windows 至今没有 uprobe 能力。</p>
+      </div>
+      <div class="card bad">
+        <span class="tag">企业端点 DLP</span>
+        <h3>太重，且无 AI 语义</h3>
+        <p>面向大企业管控台部署，成本与复杂度远超单机开发者；通用 DLP 也缺少 AI 端点画像与 Agent 进程理解。</p>
+      </div>
+    </div>
+
+    <p class="sec-desc" style="margin-top:24px">
+      最接近的 MITM 观测工具（如 llm-interceptor）也<b>只读、不可阻断、靠手工配置代理</b>，且只覆盖配置过的域名。
+      「<b>Windows + 透明覆盖 + HTTPS 内容解析 + 事中阻断</b>」这个交集，此前是空白——本项目即填补该空白。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 3 · 工作原理 ============ -->
+<section id="how">
+  <div class="wrap">
+    <div class="kicker">How it works</div>
+    <h2>工作原理：双模式采集 + 审计管线</h2>
+    <p class="sec-desc">
+      采集引擎选用 <b>mitmproxy（MIT 许可）作为 Python 库嵌入</b>，审计逻辑写成 addon 挂在
+      <code>client_connected / request / response</code> 钩子上。两种采集模式按需选择：
+    </p>
+
+    <div class="diagram">
+      <div class="drow c1" style="max-width:560px;margin:0 auto">
+        <div class="dnode src">
+          <div class="t">本机进程</div>
+          <div class="s">AI Agent CLI · IDE 插件 · MCP 服务 · 任意应用</div>
+        </div>
+      </div>
+      <div class="varrow"></div>
+      <div class="vlabel">① 双模式采集</div>
+      <div class="drow c2 modes">
+        <div class="dnode regular">
+          <span class="pill">regular · 默认</span>
+          <div class="t">显式本地代理</div>
+          <div class="s">系统代理 + 环境变量组合下发<br>无需管理员 · 无驱动 · AV 风险最低<br>归因：源端口反查连接表</div>
+        </div>
+        <div class="dnode local">
+          <span class="pill">local · 严格</span>
+          <div class="t">WinDivert 透明重定向</div>
+          <div class="s">无视应用自身代理设置，全量抓取<br>需管理员终端 · 可 --pid / --process 限定<br>归因：规格层按 PID/进程名过滤</div>
+        </div>
+      </div>
+      <div class="varrow"></div>
+      <div class="vlabel">② Flow 进入审计引擎</div>
+      <div class="drow c1" style="max-width:640px;margin:0 auto">
+        <div class="dnode engine">
+          <div class="t">mitmproxy 审计引擎（addon 钩子）</div>
+          <div class="s">connection_strategy=lazy · blocklist 域名在 SNI 阶段即可断开（零 TCP 触达）</div>
+        </div>
+      </div>
+      <div class="varrow"></div>
+      <div class="vlabel">③ 审计管线</div>
+      <div class="drow pipe">
+        <div class="dnode">
+          <div class="t">进程归因</div>
+          <div class="s">PID / exe / 画像<br>未归因显式记 unknown</div>
+        </div>
+        <div class="parrow"></div>
+        <div class="dnode">
+          <div class="t">五维求值</div>
+          <div class="s">域名 · 进程 · 体量 · 时间窗<br>多维命中取最高级动作</div>
+        </div>
+        <div class="parrow"></div>
+        <div class="dnode">
+          <div class="t">内容扫描</div>
+          <div class="s">secrets / pii / code_leak<br>纯正则+启发式，无网络调用</div>
+        </div>
+        <div class="parrow"></div>
+        <div class="dnode action-block">
+          <div class="t">判定 + 动作</div>
+          <div class="s">allow · alert · confirm · block<br>block = 合成 403，请求不出本机</div>
+        </div>
+      </div>
+      <div class="varrow"></div>
+      <div class="vlabel">④ 留痕与呈现</div>
+      <div class="drow c3">
+        <div class="dnode out">
+          <div class="t">SQLite 事件库</div>
+          <div class="s">data/audit.db + 证据文件<br>（截断 256KB + sha256）</div>
+        </div>
+        <div class="dnode out">
+          <div class="t">本地 Web 面板</div>
+          <div class="s">FastAPI · 仅 127.0.0.1:8787<br>脱敏展示 / confirm 决策 / 导出</div>
+        </div>
+        <div class="dnode out">
+          <div class="t">CLI 输出</div>
+          <div class="s">status / tail / report<br>rich 实时表格</div>
+        </div>
+      </div>
+      <div class="footnote">
+        <b>如实说明：</b>local 模式的代码路径与 WinDivert 依赖（mitmproxy-windows 0.12.15）已就绪，
+        非管理员会话下 CLI 会直接拒绝启动该模式（安全红线）；管理员环境下的实际抓取行为列入
+        <code>docs/notes/local-mode-spike.md</code> 的人工验证清单。engine 异常默认 fail-open（放行并记 error 事件），可配 fail-closed。
+      </div>
+    </div>
+
+    <p class="sec-desc" style="margin-bottom:0">
+      regular 模式的环境变量下发覆盖 Python / Node.js / curl / git 等常见运行时
+      （<code>HTTP(S)_PROXY</code>、<code>NODE_USE_ENV_PROXY</code>、<code>NODE_EXTRA_CA_CERTS</code>、
+      <code>REQUESTS_CA_BUNDLE</code>、<code>CURL_CA_BUNDLE</code>），
+      并把证书校验失败的进程聚合成"疑似不信任 CA"报告，提示补对应变量或加白名单。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 4 · 为什么选择这套架构 ============ -->
+<section id="choice">
+  <div class="wrap">
+    <div class="kicker">Design choice</div>
+    <h2>为什么选择这套架构</h2>
+    <p class="sec-desc">
+      把五类候选路线放在同一张表上比较（依据 <code>docs/01-research-report.md</code> 的调研结论）：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>能力维度</th>
+            <th class="col-us">本方案（mitmproxy 双模式）</th>
+            <th>LLM 网关</th>
+            <th>进程防火墙</th>
+            <th>eBPF 抓取</th>
+            <th>企业端点 DLP</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="dim">Windows 10/11 支持</td>
+            <td class="col-us"><span class="ok">✅</span> 一等支持</td>
+            <td><span class="ok">✅</span><span class="note">不限平台</span></td>
+            <td><span class="ok">✅</span></td>
+            <td><span class="no">❌</span><span class="note">仅 Linux/Android</span></td>
+            <td><span class="ok">✅</span><span class="note">但部署重</span></td>
+          </tr>
+          <tr>
+            <td class="dim">还原 HTTPS 明文（含 body）</td>
+            <td class="col-us"><span class="ok">✅</span> 完整<span class="note">证书固定程序自动降级白名单直通</span></td>
+            <td><span class="warn">⚠️</span><span class="note">仅"接入网关"的流量</span></td>
+            <td><span class="no">❌</span><span class="note">仅 IP:端口元数据</span></td>
+            <td><span class="ok">✅</span><span class="note">内核挂 SSL_write</span></td>
+            <td><span class="ok">✅</span><span class="note">通用内容分类</span></td>
+          </tr>
+          <tr>
+            <td class="dim">进程归因</td>
+            <td class="col-us"><span class="ok">✅</span><span class="note">源端口反查连接表 / local 原生 PID</span></td>
+            <td><span class="no">❌</span><span class="note">只看得到网关本身</span></td>
+            <td><span class="ok">✅</span></td>
+            <td><span class="ok">✅</span><span class="note">内核级</span></td>
+            <td><span class="ok">✅</span></td>
+          </tr>
+          <tr>
+            <td class="dim">事中阻断</td>
+            <td class="col-us"><span class="ok">✅</span><span class="note">合成 403 / SNI 阶段断开，请求不出本机</span></td>
+            <td><span class="warn">⚠️</span><span class="note">仅网关内拒绝</span></td>
+            <td><span class="ok">✅</span><span class="note">连接级，无内容判断</span></td>
+            <td><span class="no">❌</span><span class="note">观测为主</span></td>
+            <td><span class="ok">✅</span></td>
+          </tr>
+          <tr>
+            <td class="dim">需要应用自愿接入</td>
+            <td class="col-us"><span class="ok">不需要</span><span class="note">对不配合的进程同样生效</span></td>
+            <td><span class="no">必须</span><span class="note">改 base_url / 装 SDK</span></td>
+            <td><span class="ok">不需要</span></td>
+            <td><span class="ok">不需要</span></td>
+            <td><span class="ok">不需要</span></td>
+          </tr>
+          <tr>
+            <td class="dim">AI 语义规则</td>
+            <td class="col-us"><span class="ok">✅</span><span class="note">AI 端点画像 + 密钥/代码外泄扫描</span></td>
+            <td><span class="warn">⚠️</span><span class="note">部分具备</span></td>
+            <td><span class="no">❌</span></td>
+            <td><span class="no">❌</span></td>
+            <td><span class="warn">⚠️</span><span class="note">通用 DLP 规则</span></td>
+          </tr>
+          <tr>
+            <td class="dim">单机部署重量</td>
+            <td class="col-us"><span class="ok">轻</span><span class="note">pip 安装，一条命令起停</span></td>
+            <td><span class="warn">中</span><span class="note">需自建网关服务</span></td>
+            <td><span class="warn">中</span><span class="note">常驻驱动</span></td>
+            <td><span class="warn">中</span></td>
+            <td><span class="no">重</span><span class="note">企业管控台</span></td>
+          </tr>
+          <tr>
+            <td class="dim">许可/复用风险</td>
+            <td class="col-us"><span class="ok">无</span><span class="note">引擎 mitmproxy 为 MIT（已核实原文）</span></td>
+            <td><span class="warn">⚠️</span><span class="note">部分组件许可有边界</span></td>
+            <td><span class="no">GPL 传染</span><span class="note">Portmaster/simplewall</span></td>
+            <td><span class="ok">Apache-2.0</span><span class="note">但 Windows 不可用</span></td>
+            <td><span class="no">闭源</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid g4" style="margin-top:28px">
+      <div class="card">
+        <span class="ico">⚖️</span>
+        <h3>MIT 许可的 mitmproxy</h3>
+        <p>调研阶段核实了 LICENSE 原文：可作 Python 库嵌入并随本项目分发，无 GPL 传染顾虑。Portmaster / simplewall / mihomo 等 GPL 项目仅作架构范本，不引入代码。</p>
+      </div>
+      <div class="card">
+        <span class="ico">🎯</span>
+        <h3>进程归因是底线</h3>
+        <p>regular 模式在连接建立瞬间用源端口反查系统连接表；local 模式由 WinDivert 在包层按 PID/进程名过滤。查不到的流量显式标记 <code>unknown</code> 并单独计数告警，绝不冒充归因成功。</p>
+      </div>
+      <div class="card">
+        <span class="ico">🛑</span>
+        <h3>事中阻断，不是事后报告</h3>
+        <p>block 动作在 <code>request</code> 钩子内直接合成 403 响应，请求<b>不会到达目标服务器</b>；黑名单域名更早——在 SNI 阶段即断开，配合 lazy 连接策略做到零 TCP 触达。</p>
+      </div>
+      <div class="card">
+        <span class="ico">🔁</span>
+        <h3>完整卸载，可逆第一</h3>
+        <p>所有系统改动（证书、代理、环境变量）先写入状态文件再实施（journal-first），<code>aaa teardown</code> 按记录逆序幂等还原——即使进程被强杀，重启后仍能完整还原。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 · 核心能力 ============ -->
+<section id="features">
+  <div class="wrap">
+    <div class="kicker">Capabilities</div>
+    <h2>核心能力：五维规则 × 密钥扫描 × 安全默认</h2>
+    <p class="sec-desc">
+      每条请求经五个维度求值，命中规则按权重累加风险分（上限 100），动作取<b>最高级</b>：
+      <code>allow &lt; alert &lt; confirm &lt; block</code>。以下阈值为出厂策略
+      <code>policies/default.yaml</code> 的真实默认值。
+    </p>
+
+    <div class="grid g3">
+      <div class="card dim-card">
+        <span class="no">01</span>
+        <span class="tag">domain 域名</span>
+        <h3>端点分类与首连告警</h3>
+        <ul>
+          <li><b>known_ai_api</b>：Anthropic / OpenAI / Gemini / DeepSeek / Moonshot / OpenRouter / xAI</li>
+          <li><b>code_hosting</b>：github.com / api.github.com / gitlab.com</li>
+          <li><b>unknown 首连</b> → <code>alert</code>（按主机记忆，不重复噪音）</li>
+          <li><b>blocklist</b> → SNI 阶段直接断开（enforce 下）</li>
+        </ul>
+      </div>
+      <div class="card dim-card">
+        <span class="no">02</span>
+        <span class="tag">process 进程</span>
+        <h3>进程画像与异常组合</h3>
+        <ul>
+          <li><b>agent_cli</b>：claude / cursor / codex / copilot / node / python / java…</li>
+          <li><b>browser</b>：chrome / msedge / firefox</li>
+          <li>「非 AI 进程访问 AI 端点」→ <code>alert</code>（weight 30）</li>
+          <li>PID / exe 路径 / 命令行 / 公司信息随事件落库</li>
+        </ul>
+      </div>
+      <div class="card dim-card">
+        <span class="no">03</span>
+        <span class="tag">content 内容</span>
+        <h3>密钥 / PII / 代码外泄扫描</h3>
+        <ul>
+          <li><b>secrets</b>：43 条规则（gitleaks 核心移植 + 熵 + allowlist），命中即 <code>block</code></li>
+          <li><b>pii</b>：邮箱 / 手机号 / 身份证 / 银行卡，命中 &gt;10 处 → <code>confirm</code></li>
+          <li><b>code_leak</b>：本地绝对路径 / 代码密度 / multipart 上传 / 大块 base64</li>
+          <li>全部纯正则+启发式，无网络调用，扫描截断 256KB</li>
+        </ul>
+      </div>
+      <div class="card dim-card">
+        <span class="no">04</span>
+        <span class="tag">volume 体量</span>
+        <h3>大体量外发识别</h3>
+        <ul>
+          <li>单请求 &gt;512KB 且代码相似度 &gt;0.6 → <code>confirm</code>（疑似代码外发）</li>
+          <li>单请求 &gt;5MB → <code>alert</code>（huge-body）</li>
+          <li>扫描截断上限 <code>max_body_scan: 262144</code></li>
+        </ul>
+      </div>
+      <div class="card dim-card">
+        <span class="no">05</span>
+        <span class="tag">time_window 时间窗</span>
+        <h3>滑动窗口速率</h3>
+        <ul>
+          <li>进程 × 域名 60 秒窗口内 &gt;60 次请求 → <code>alert</code>（burst）</li>
+          <li>unknown 归因速率单独计数，归因质量可观测</li>
+        </ul>
+      </div>
+      <div class="card dim-card">
+        <span class="no">06</span>
+        <span class="tag">verdict 判定</span>
+        <h3>四级动作 + 风险分</h3>
+        <ul>
+          <li><code>allow</code> 放行 · <code>alert</code> 告警留痕 · <code>confirm</code> 待人工决策 · <code>block</code> 事中拦截</li>
+          <li><code>risk_score = min(100, Σ weight)</code>，仅供排序展示</li>
+          <li>confirm 决策：拒绝后同主机+同规则 TTL 内升级 block；允许仅一次性放行</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:16px">
+      <div class="card">
+        <span class="ico">🧪</span>
+        <h3>dry-run 出厂默认</h3>
+        <p>默认策略 <code>mode: dry-run</code>——只告警不阻断；切换 <code>enforce</code> 需显式修改策略文件。
+        策略支持 mtime 热更新（2 秒轮询），<code>aaa policy lint</code> 校验合法性。
+        引擎异常默认 fail-open 并记 error 事件，可配 fail-closed。</p>
+      </div>
+      <div class="card">
+        <span class="ico">🙈</span>
+        <h3>脱敏展示</h3>
+        <p>命中的密钥在面板与事件中<b>默认打码</b>（⟦规则id|掩码片段⟧ 形态），打码与扫描共用同一匹配核心，永不漂移。
+        查看原文需显式 <code>?reveal=1</code> 解锁，且解锁动作记入审计日志。面板仅监听本地回环。</p>
+      </div>
+      <div class="card">
+        <span class="ico">🧾</span>
+        <h3>证据留痕</h3>
+        <p>每条事件落 SQLite（<code>data/audit.db</code>），请求 body 截断存为证据文件（默认上限 256KB）并记录 sha256；
+        <code>aaa report --verify-evidence</code> 可复核证据完整性。保留期默认 14 天，可 <code>aaa trim</code> 清理。不上传任何数据。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 6 · 快速开始 ============ -->
+<section id="quickstart">
+  <div class="wrap">
+    <div class="kicker">Quick start</div>
+    <h2>快速开始</h2>
+    <p class="sec-desc">
+      以下命令与 <code>src/aaa/cli.py</code> 的实际实现一致（v0.1.0）。
+      环境：Windows 10/11，Python ≥ 3.11。
+    </p>
+
+    <div class="steps">
+      <div class="step">
+        <h3>安装</h3>
+        <p class="desc">在项目根目录以可编辑模式安装；需要本地面板时装上 web 扩展（fastapi + uvicorn）。</p>
+        <div class="codewin">
+          <div class="bar"><span class="d" style="background:#f87171"></span><span class="d" style="background:#fbbf24"></span><span class="d" style="background:#34d399"></span><span class="name">PowerShell / Git Bash</span><button class="copy" data-copy>复制</button></div>
+<pre><code><span class="c"># 基础安装（采集引擎 + CLI）</span>
+<span class="p">pip install -e .</span>
+
+<span class="c"># 需要本地面板时（fastapi + uvicorn 为可选依赖）</span>
+<span class="p">pip install -e </span><span class="k">".[web]"</span>
+
+<span class="c"># 确认安装</span>
+aaa --version   <span class="c"># aaa 0.1.0</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <h3>一键 setup：CA 根证书 → 系统代理 → 用户环境变量</h3>
+        <p class="desc">交互式向导，每一步先展示将要做的改动、确认后再实施；全部改动记录到 <code>data/setup-state.json</code>。</p>
+        <div class="codewin">
+          <div class="bar"><span class="d" style="background:#f87171"></span><span class="d" style="background:#fbbf24"></span><span class="d" style="background:#34d399"></span><span class="name">aaa setup</span><button class="copy" data-copy>复制</button></div>
+<pre><code><span class="c"># 交互式一键引导（每步先展示改动再确认）</span>
+<span class="p">aaa setup</span>
+
+<span class="c"># 常用变体</span>
+aaa setup <span class="k">--dry-run</span>          <span class="c"># 只预览动作，不实施任何系统改动</span>
+aaa setup <span class="k">--machine-ca</span>       <span class="c"># CA 装到 LocalMachine（需管理员；默认 CurrentUser 静默导入）</span>
+aaa setup <span class="k">--yes</span>              <span class="c"># 跳过逐步确认（自动化用）</span>
+
+<span class="c"># 也可分步执行</span>
+aaa setup ca <span class="k">--store user</span>    <span class="c"># user | machine</span>
+aaa setup proxy              <span class="c"># WinINET 用户代理 127.0.0.1:8080（--winhttp 加机器级，需管理员）</span>
+aaa setup env                <span class="c"># 下发 HTTP(S)_PROXY / NODE_* / REQUESTS_CA_BUNDLE 等环境变量</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <h3>运行审计代理</h3>
+        <p class="desc">默认 regular 模式、监听 127.0.0.1:8080，事件落 SQLite，启动时按保留期（默认 14 天）自动清理。</p>
+        <div class="codewin">
+          <div class="bar"><span class="d" style="background:#f87171"></span><span class="d" style="background:#fbbf24"></span><span class="d" style="background:#34d399"></span><span class="name">aaa run</span><button class="copy" data-copy>复制</button></div>
+<pre><code><span class="c"># 默认 regular 模式（系统代理），Ctrl+C 优雅退出</span>
+<span class="p">aaa run</span>
+
+<span class="c"># local 模式：WinDivert 透明抓取，需「管理员」终端；可限定目标进程</span>
+aaa run <span class="k">--mode local</span>
+aaa run --mode local <span class="k">--pid 12345</span>
+aaa run --mode local <span class="k">--process claude</span>
+
+<span class="c"># 其他常用选项</span>
+aaa run <span class="k">--port 8080</span> <span class="k">--policy policies/default.yaml</span>
+aaa run <span class="k">--jsonl</span>              <span class="c"># 额外镜像写 data/raw/YYYYMMDD.jsonl（默认仅 SQLite）</span>
+aaa run <span class="k">--retention-days 7</span>   <span class="c"># 调整保留期</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <h3>观察：CLI 与本地面板</h3>
+        <p class="desc">状态总览、实时事件流、聚合报告、Web 面板（仅本地回环）。</p>
+        <div class="codewin">
+          <div class="bar"><span class="d" style="background:#f87171"></span><span class="d" style="background:#fbbf24"></span><span class="d" style="background:#34d399"></span><span class="name">aaa status / tail / report / web</span><button class="copy" data-copy>复制</button></div>
+<pre><code><span class="c"># 当前状态：代理 / CA / 策略版本 / 事件数 / 最近 5 条事件 / 待还原改动</span>
+<span class="p">aaa status</span>
+
+<span class="c"># 实时滚动新事件（rich Live；可按判定/进程/主机过滤）</span>
+aaa tail <span class="k">--verdict block</span>
+
+<span class="c"># 聚合报告：按判定 / 进程 / 主机 / 规则统计</span>
+aaa report <span class="k">--since 24h</span>
+aaa report --since 7d <span class="k">--csv</span>          <span class="c"># 或 --json</span>
+aaa report <span class="k">--verify-evidence</span>         <span class="c"># 复核全部证据文件 sha256</span>
+
+<span class="c"># 本地面板（需先安装 .[web]）：过滤 → 查看（脱敏）→ 解锁 → 导出 → confirm 决策</span>
+<span class="p">aaa web</span>                               <span class="c"># http://127.0.0.1:8787，仅本地回环</span>
+
+<span class="c"># 校验 / 清理</span>
+aaa policy lint                       <span class="c"># pydantic 严格校验策略文件</span>
+aaa trim <span class="k">--days 14</span>                    <span class="c"># 清理过期事件与证据</span></code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <h3>完整还原（卸载）</h3>
+        <p class="desc">按状态文件逆序、幂等还原全部改动；崩溃/强杀后重跑同样有效。</p>
+        <div class="codewin">
+          <div class="bar"><span class="d" style="background:#f87171"></span><span class="d" style="background:#fbbf24"></span><span class="d" style="background:#34d399"></span><span class="name">aaa teardown</span><button class="copy" data-copy>复制</button></div>
+<pre><code><span class="c"># 还原全部：CA 证书、系统代理、用户环境变量</span>
+<span class="p">aaa teardown</span>
+
+<span class="c"># 限定范围（可多选）</span>
+aaa teardown <span class="k">ca proxy env</span>
+
+aaa teardown <span class="k">--dry-run</span>       <span class="c"># 先看看会还原什么</span></code></pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:8px">
+      <p><b style="color:var(--text)">关于阻断：</b>出厂默认 <code>mode: dry-run</code>（只告警不阻断）。
+      要启用事中阻断，编辑 <code>policies/default.yaml</code> 将 <code>mode</code> 改为 <code>enforce</code>（保存即热更新，无需重启）。
+      关于 <code>aaa harden on|off</code>（防火墙防绕过加固）：该命令目前为 <b>P6 占位</b>，仅打印规划说明，不会对系统做任何改动。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7 · 路线图 ============ -->
+<section id="roadmap">
+  <div class="wrap">
+    <div class="kicker">Roadmap</div>
+    <h2>路线图（P6 强化项）</h2>
+    <p class="sec-desc">
+      v1 主体（采集 / 归因 / 规则引擎 / 存储 / CLI / Web 面板）已实现；
+      以下为执行计划 <code>docs/03-execution-plan.md</code> 中 P6 阶段的强化项，按需排期。
+    </p>
+    <div class="grid g3">
+      <div class="card">
+        <h3>防绕过加固<span class="badge none">未实施 · CLI 占位</span></h3>
+        <p><code>aaa harden on</code>：防火墙仅放行本工具的 443/TCP 出站、拒绝其他进程 443/TCP、
+        并<b>拒绝 UDP 443</b> 逼 QUIC 回落可审计的 TLS（Zscaler 等商用方案的标准做法）。
+        内置 svchost / Windows Update 白名单，启用前 dry-run 列出受影响进程，规则进状态文件可还原。
+        <b>当前 <code>aaa harden</code> 为占位命令，任何参数都不触碰防火墙。</b></p>
+      </div>
+      <div class="card">
+        <h3>LLM 辅助判定<span class="badge plan">规划中</span></h3>
+        <p>仅对规则引擎判 <code>alert / confirm</code> 的事件触发：截断+脱敏后的摘要送 OpenAI 兼容接口，
+        返回结构化结论（is_violation / reason / category）。硬性约束：每事件 token 上限、每日成本上限、可整体关闭，
+        <b>判定结果只作参考、不直接 block</b>。</p>
+      </div>
+      <div class="card">
+        <h3>服务化常驻<span class="badge plan">规划中</span></h3>
+        <p>NSSM / 计划任务安装为系统服务（自动重启、日志），托盘 UI 与核心服务分进程、经本地 IPC 通信
+        （规避 Session 0 隔离）。<span class="badge part">部分落地</span>
+        基于 PyInstaller 的单文件 exe 打包已构建并通过冒烟验证（命令与代理转发均正常）。</p>
+      </div>
+    </div>
+    <p class="sec-desc" style="margin-top:20px;margin-bottom:0">
+      另有 T6.4 响应侧增强在列：prompt-injection 特征标记（promptfoo 攻击语料反向用作检测特征）与 ETW 归因增强。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 8 · 合规与使用边界 ============ -->
+<section id="compliance">
+  <div class="wrap">
+    <div class="kicker">Compliance</div>
+    <h2>合规与使用边界</h2>
+    <p class="sec-desc">
+      抓取本机 HTTPS 明文属于<b>高权限监控行为</b>。本工具的立场是：能力透明、边界明示、随时可逆。
+    </p>
+    <div class="grid g2">
+      <div class="card comp-card c-red">
+        <h3>仅用于授权设备</h3>
+        <p>只用于审计<b>自己拥有或被明确授权管理</b>的计算机。部署到他人设备前必须获得授权——这不是道德建议，而是使用前提。</p>
+      </div>
+      <div class="card comp-card">
+        <h3>安装根证书的风险提示</h3>
+        <p>信任自建 CA 等价于 MITRE ATT&amp;CK <code>T1553.004</code>（Subvert Trust Controls），
+        可能触发杀软 / EDR 告警；WinDivert 驱动同样可能被个别 AV 拦截。
+        本工具<b>不隐藏自身行为</b>：安装动作全部显式确认、先打印将执行的改动再实施、支持 <code>--dry-run</code> 预览。</p>
+      </div>
+      <div class="card comp-card c-cyan">
+        <h3>数据留在本机</h3>
+        <p>事件与证据只写本地 SQLite / 证据目录，<b>不联网上传任何数据</b>；UI 默认脱敏展示，命中的密钥打码、解锁需显式操作并留审计日志；
+        保留期默认 14 天，随时可 <code>aaa trim</code> 清理。</p>
+      </div>
+      <div class="card comp-card c-green">
+        <h3>完整卸载</h3>
+        <p><code>aaa teardown</code> 依据 journal-first 状态文件，逆序、幂等地还原 CA 证书（按序列号精确删除，不误删）、
+        系统代理与全部下发过的环境变量；即使进程被强杀，重启后重跑仍能完整还原——不留残留。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 页脚 ============ -->
+<footer>
+  <div class="wrap">
+    <div class="foot-grid">
+      <div>
+        <h4>项目路径</h4>
+        <p><code>E:\tmp\Zcode\chat\AI-AGENT-AUDIT</code><br>
+        本页位于 <code>website/index.html</code>（自包含单文件，可直接双击打开）。<br>
+        当前版本 v0.1.0 · Windows 10/11 · Python ≥ 3.11 · MIT</p>
+      </div>
+      <div>
+        <h4>文档索引</h4>
+        <ul>
+          <li>→ <a href="../README.md">README.md</a> — 背景与定位</li>
+          <li>→ <a href="../docs/01-research-report.md">docs/01-research-report.md</a> — 竞品与选型调研</li>
+          <li>→ <a href="../docs/02-technical-design.md">docs/02-technical-design.md</a> — 架构与设计决策</li>
+          <li>→ <a href="../docs/03-execution-plan.md">docs/03-execution-plan.md</a> — 分阶段执行计划</li>
+          <li>→ <a href="../docs/notes/decisions.md">docs/notes/decisions.md</a> — 实施决策日志</li>
+          <li>→ <a href="../docs/notes/local-mode-spike.md">docs/notes/local-mode-spike.md</a> — local 模式 spike</li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-note">
+      本页内容于 2026-10-24 与仓库代码逐项核对：CLI 命令与 src/aaa/cli.py 一致；密钥规则数 43（scanners/secrets.py）；
+      出厂策略为 dry-run（policies/default.yaml）。aaa harden 为 P6 占位未实施；local 模式代码已实现、依赖齐备，
+      管理员环境下的实际抓取行为待人工验证（docs/notes/local-mode-spike.md）。<br>
+      EgressSentinel · 仅用于授权设备 · 证据不离开本机。
+    </div>
+  </div>
+</footer>
+
+<script>
+  // 代码块复制
+  document.querySelectorAll('[data-copy]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var pre = btn.closest('.codewin').querySelector('pre');
+      var text = pre.innerText.replace(/^aaa\s*\$/gm, '').trim();
+      function done() { btn.textContent = '已复制 ✓'; setTimeout(function () { btn.textContent = '复制'; }, 1600); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, done);
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta); done();
+      }
+    });
+  });
+  // 导航滚动高亮
+  var links = Array.prototype.slice.call(document.querySelectorAll('.nav-links a'));
+  var secs = links.map(function (a) { return document.querySelector(a.getAttribute('href')); });
+  function spy() {
+    var y = window.scrollY + 120, idx = 0;
+    secs.forEach(function (s, i) { if (s && s.offsetTop <= y) idx = i; });
+    links.forEach(function (a, i) { a.classList.toggle('active', i === idx); });
+  }
+  window.addEventListener('scroll', spy, { passive: true });
+  spy();
+</script>
+</body>
+</html>

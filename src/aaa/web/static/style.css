@@ -1,0 +1,78 @@
+:root {
+  --bg: #0f1420; --panel: #171e2e; --line: #26304a; --fg: #dbe4f5; --dim: #8b97b0;
+  --ok: #3fb96f; --warn: #d9a13c; --conf: #b48be0; --blk: #e05a5a; --acc: #4f9cf9;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 "Segoe UI", "Microsoft YaHei", sans-serif; }
+header { display: flex; align-items: baseline; gap: 16px; padding: 12px 20px;
+  border-bottom: 1px solid var(--line); }
+header h1 { font-size: 18px; margin: 0; }
+header .sub { color: var(--dim); font-size: 12px; font-weight: normal; }
+.conn { color: var(--dim); font-size: 12px; margin-left: auto; }
+.mono { font-family: Consolas, "Courier New", monospace; }
+
+.cards { display: flex; gap: 12px; padding: 14px 20px; flex-wrap: wrap; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: 10px 18px; min-width: 120px; }
+.card .num { font-size: 24px; font-weight: 600; }
+.card .lbl { color: var(--dim); font-size: 12px; }
+.card.warn .num { color: var(--warn); }
+.card.confirm .num { color: var(--conf); }
+.card.block .num { color: var(--blk); }
+
+.filters { display: flex; gap: 10px; padding: 4px 20px 12px; flex-wrap: wrap;
+  align-items: end; border-bottom: 1px solid var(--line); }
+.filters label { display: flex; flex-direction: column; gap: 3px; font-size: 12px;
+  color: var(--dim); }
+.filters input, .filters select { background: var(--panel); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+button { background: var(--acc); color: #fff; border: 0; border-radius: 6px;
+  padding: 7px 14px; cursor: pointer; }
+button.ghost { background: transparent; border: 1px solid var(--line); color: var(--fg); }
+button.danger { background: var(--blk); }
+button.ok { background: var(--ok); }
+button.link { background: none; color: var(--acc); padding: 0 6px; }
+button:hover { filter: brightness(1.15); }
+
+.layout { display: flex; gap: 0; min-height: 55vh; }
+#list-pane { flex: 1.6; padding: 10px 20px; }
+#detail-pane { flex: 1; border-left: 1px solid var(--line); padding: 14px 20px;
+  overflow-y: auto; max-height: 78vh; }
+.hidden { display: none !important; }
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
+  font-size: 13px; }
+th { color: var(--dim); font-weight: 500; }
+#events tbody tr { cursor: pointer; }
+#events tbody tr:hover { background: #1c2538; }
+#events tbody tr.selected { background: #22304d; }
+
+.v { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+.v.allow, .v.logged { background: #1d3a2a; color: var(--ok); }
+.v.alert, .v.alerted { background: #3d331d; color: var(--warn); }
+.v.confirm { background: #322647; color: var(--conf); }
+.v.block, .v.blocked-403 { background: #432226; color: var(--blk); }
+.v.unassessed { background: #2a2f3d; color: var(--dim); }
+
+.pager { display: flex; gap: 12px; align-items: center; margin-top: 10px;
+  color: var(--dim); }
+.detail-head { display: flex; justify-content: space-between; align-items: center; }
+.detail-head h2 { font-size: 15px; margin: 0 0 8px; }
+h3 { font-size: 13px; color: var(--dim); margin: 14px 0 6px; text-transform: none; }
+.kv td:first-child { color: var(--dim); width: 110px; }
+.hint { color: var(--dim); font-size: 12px; margin: 4px 0; }
+.body-view { background: #0b101c; border: 1px solid var(--line); border-radius: 6px;
+  padding: 10px; max-height: 260px; overflow: auto; white-space: pre-wrap;
+  word-break: break-all; font-size: 12px; }
+.body-view .mask { color: var(--warn); }
+.export-row { display: flex; gap: 8px; margin-top: 10px; }
+#confirm-box { margin: 10px 20px; padding: 10px 16px; border: 1px solid #4a3b63;
+  border-radius: 8px; background: #241d33; }
+#confirm-box h2 { font-size: 14px; margin: 4px 0; color: var(--conf); }
+.audit { color: var(--dim); font-size: 12px; padding-left: 18px; }
+#d-confirm-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap;
+  align-items: end; }
+footer { color: var(--dim); font-size: 12px; padding: 10px 20px;
+  border-top: 1px solid var(--line); }

@@ -1,0 +1,57 @@
+name: Build
+
+# 打包各平台单文件可执行（PyInstaller 跨平台交叉编译不可行，按矩阵各跑一份）。
+# 推 v* 标签时构建并发布 GitHub Release；平时可手动触发仅上传 artifacts。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runs-on }}
+    continue-on-error: ${{ matrix.experimental }}
+    fail-fast: false
+    strategy:
+      matrix:
+        include:
+          - { runs-on: windows-latest, os: windows, arch: amd64, experimental: false }
+          - { runs-on: windows-11-arm, os: windows, arch: arm64, experimental: true }
+          - { runs-on: ubuntu-latest, os: linux, arch: amd64, experimental: true }
+          - { runs-on: ubuntu-24.04-arm, os: linux, arch: arm64, experimental: true }
+          - { runs-on: macos-13, os: macos, arch: amd64, experimental: true }
+          - { runs-on: macos-latest, os: macos, arch: arm64, experimental: true }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e ".[dev,web]" "pyinstaller>=6.0"
+      - name: Build onefile executable
+        run: python build_exe.py
+      - name: Stage release artifact
+        shell: bash
+        run: |
+          mkdir -p release
+          if [[ "${{ matrix.os }}" == "windows" ]]; then
+            cp dist/ai-agent-audit.exe "release/egress-sentinel-${{ matrix.os }}-${{ matrix.arch }}.exe"
+          else
+            cp dist/ai-agent-audit "release/egress-sentinel-${{ matrix.os }}-${{ matrix.arch }}"
+          fi
+          ls -la release/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egress-sentinel-${{ matrix.os }}-${{ matrix.arch }}
+          path: release/*
+          if-no-files-found: error
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          fail_on_unmatched_files: true

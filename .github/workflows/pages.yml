@@ -1,0 +1,36 @@
+name: Pages
+
+# 用 GitHub Pages 代理官网内容（website/index.html）。
+# 首次使用：仓库 Settings → Pages → Source 选 "GitHub Actions"。
+on:
+  push:
+    branches: [main]
+    paths:
+      - "website/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: 部署官网到 GitHub Pages
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website
+      - id: deployment
+        uses: actions/deploy-pages@v4

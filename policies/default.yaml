@@ -1,0 +1,70 @@
+# AI-AGENT-AUDIT 默认策略 —— 完整示例（02 文档 §5 schema，03 文档 T3.1/T3.5）
+# 出厂默认 dry-run：只告警不阻断（02 文档 §0 安全红线）；切 enforce 需显式修改本文件。
+version: 1
+mode: dry-run # dry-run | enforce
+defaults:
+  fail_open: true # 引擎异常放行并记 error（02 文档 D5）
+  max_body_scan: 262144 # 内容扫描截断上限 256KB（02 文档 D6）
+
+domains:
+  classes:
+    known_ai_api:
+      - api.anthropic.com
+      - api.openai.com
+      - generativelanguage.googleapis.com
+      - api.deepseek.com
+      - api.moonshot.cn
+      - openrouter.ai
+      - api.x.ai
+    code_hosting:
+      - github.com
+      - api.github.com
+      - gitlab.com
+  rules:
+    - id: domain-unknown # 未知域名首连告警（unknown 首连）
+      match: { class: unknown }
+      action: alert
+      weight: 20
+    - id: domain-blocklist # 恶意域名：CONNECT/SNI 阶段直接阻断（enforce）
+      match: { host_regex: '\.example-mal\.com$' }
+      action: block
+      weight: 80
+
+processes:
+  profiles:
+    agent_cli: { exe_regex: '(?i)(claude|cursor|codex|copilot|node|python|java)' }
+    browser: { exe_regex: '(?i)(chrome|msedge|firefox)\.exe$' }
+  rules:
+    - id: non-agent-to-ai-api # 非 AI 进程访问 AI 端点
+      match: { profile_not: agent_cli, dest_class: known_ai_api }
+      action: alert
+      weight: 30
+
+content:
+  scanners: [secrets, pii, code_leak]
+  rules:
+    - id: secret-leak # 任何疑似密钥外发
+      scanner: secrets
+      action: block
+      weight: 60
+    - id: pii-bulk # PII 批量外发（阈值命中数 > 10）
+      scanner: pii
+      match: { hits_gt: 10 }
+      action: confirm
+      weight: 40
+    - id: code-bulk-upload # 大体量 + 高代码相似度（代码外发）
+      match: { body_size_gt: 512000, code_likeness_gt: 0.6 }
+      action: confirm
+      weight: 40
+
+volume:
+  - id: huge-body # 单请求体量超 5MB
+    match: { body_size_gt: 5242880 }
+    action: alert
+    weight: 20
+
+time_window:
+  - id: burst # 进程×域名 滑动窗口速率（60s 内 > 60 次）
+    match: { requests_gt: 60, window_seconds: 60 }
+    action: alert
+    weight: 20

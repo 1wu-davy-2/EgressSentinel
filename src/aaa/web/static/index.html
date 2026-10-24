@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-AGENT-AUDIT 面板</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>AI-AGENT-AUDIT <span class="sub">本机 AI Agent 外发流量审计</span></h1>
+  <span id="conn" class="conn">本地面板 · 默认脱敏展示</span>
+</header>
+
+<section id="cards" class="cards">
+  <div class="card"><div class="num" id="c-total">–</div><div class="lbl">事件总数</div></div>
+  <div class="card warn"><div class="num" id="c-alert">–</div><div class="lbl">alert</div></div>
+  <div class="card confirm"><div class="num" id="c-confirm">–</div><div class="lbl">confirm 待决策</div></div>
+  <div class="card block"><div class="num" id="c-block">–</div><div class="lbl">block</div></div>
+  <div class="card"><div class="num" id="c-hosts">–</div><div class="lbl">目标主机数</div></div>
+</section>
+
+<section class="filters">
+  <label>判定 <select id="f-verdict">
+    <option value="">全部</option>
+    <option>allow</option><option>alert</option><option>confirm</option><option>block</option>
+    <option>unassessed</option>
+  </select></label>
+  <label>维度 <select id="f-dim">
+    <option value="">全部</option>
+    <option>domain</option><option>process</option><option>content</option>
+    <option>volume</option><option>time_window</option><option>decision</option>
+  </select></label>
+  <label>PID <input id="f-pid" type="number" style="width:90px" placeholder="如 4242"></label>
+  <label>主机 <input id="f-host" type="text" placeholder="api.example.com"></label>
+  <label>起始 <input id="f-since" type="text" placeholder="24h 或 2026-10-24T00:00"></label>
+  <label>截止 <input id="f-until" type="text" placeholder="ISO 时间"></label>
+  <button id="b-query">查询</button>
+  <button id="b-export-json" class="ghost">导出 JSON</button>
+  <button id="b-export-csv" class="ghost">导出 CSV</button>
+</section>
+
+<section id="confirm-box" class="confirm-box hidden">
+  <h2>待人工决策（verdict=confirm）<button class="link" id="b-goto-confirm">查看</button></h2>
+  <p class="hint">允许＝放行这一次；拒绝＝同类请求在 TTL 内升级为 block。</p>
+</section>
+
+<main class="layout">
+  <section id="list-pane">
+    <table id="events">
+      <thead><tr>
+        <th>时间</th><th>判定</th><th>风险</th><th>方法</th><th>主机</th><th>路径</th><th>进程</th><th>动作</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="pager">
+      <button id="b-prev">上一页</button>
+      <span id="page-info"></span>
+      <button id="b-next">下一页</button>
+    </div>
+  </section>
+
+  <aside id="detail-pane" class="hidden">
+    <div class="detail-head">
+      <h2>事件详情 <span id="d-id" class="mono"></span></h2>
+      <button id="b-close" class="ghost">关闭</button>
+    </div>
+    <div id="d-decision-banner"></div>
+    <table class="kv" id="d-meta"></table>
+    <h3>命中规则</h3>
+    <table id="d-rules"><thead><tr><th>规则</th><th>维度</th><th>动作</th><th>证据</th></tr></thead><tbody></tbody></table>
+    <h3>请求 body</h3>
+    <p class="hint" id="d-body-hint"></p>
+    <div id="d-body-actions">
+      <button id="b-reveal" class="danger">显示原文（解锁并记审计日志）</button>
+    </div>
+    <pre id="d-body" class="mono body-view"></pre>
+    <div class="export-row">
+      <button id="b-event-json" class="ghost">导出此事件 JSON</button>
+      <button id="b-event-csv" class="ghost">导出此事件 CSV</button>
+    </div>
+    <div id="d-confirm-actions" class="hidden">
+      <h3>人工决策</h3>
+      <label>TTL（秒，拒绝缓存有效期）<input id="d-ttl" type="number" value="3600" style="width:110px"></label>
+      <button id="b-allow" class="ok">允许（仅这一次）</button>
+      <button id="b-deny" class="danger">拒绝（缓存升级 block）</button>
+    </div>
+    <h3>审计日志（本事件）</h3>
+    <ul id="d-audit" class="mono audit"></ul>
+  </aside>
+</main>
+
+<footer>仅本地访问（127.0.0.1）。数据不外传；原文查看会被记录。默认脱敏：命中的密钥以 ⟦规则|打码⟧ 显示。</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# 运行时数据（事件、证据、CA、状态文件）——绝不入库
+data/
+
+# 构建产物
+dist/
+build/
+*.egg-info/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 测试与工具缓存
+.pytest_cache/
+.ruff_cache/
+
+# 打包
+*.spec

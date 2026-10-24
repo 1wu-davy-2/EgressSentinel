@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install ruff
+      - run: ruff check src tests
+
+  test:
+    # 矩阵：常用 Python 版本 × amd64/arm64 × Linux/Windows/macOS。
+    # v1 为 Windows 一等平台（本地已验证）；Linux/macOS 及 Windows-arm64 为
+    # 移植性回归（代码含平台守卫），experimental 任务失败不阻塞合并，
+    # 待各平台验证通过后把 experimental 改为 false 即可纳入严格门禁。
+    name: py${{ matrix.python }} · ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runs-on }}
+    continue-on-error: ${{ matrix.experimental }}
+    fail-fast: false
+    strategy:
+      matrix:
+        include:
+          # Windows amd64（一等平台，严格门禁）
+          - { runs-on: windows-latest, os: windows, arch: amd64, python: "3.11", experimental: false }
+          - { runs-on: windows-latest, os: windows, arch: amd64, python: "3.12", experimental: false }
+          # Windows arm64（runner 公测中）
+          - { runs-on: windows-11-arm, os: windows, arch: arm64, python: "3.12", experimental: true }
+          # Linux amd64 / arm64
+          - { runs-on: ubuntu-latest, os: linux, arch: amd64, python: "3.11", experimental: true }
+          - { runs-on: ubuntu-latest, os: linux, arch: amd64, python: "3.12", experimental: true }
+          - { runs-on: ubuntu-latest, os: linux, arch: amd64, python: "3.13", experimental: true }
+          - { runs-on: ubuntu-24.04-arm, os: linux, arch: arm64, python: "3.12", experimental: true }
+          # macOS amd64（Intel）/ arm64（Apple Silicon）
+          - { runs-on: macos-13, os: macos, arch: amd64, python: "3.12", experimental: true }
+          - { runs-on: macos-latest, os: macos, arch: arm64, python: "3.12", experimental: true }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install
+        run: python -m pip install -e ".[dev,web]"
+      - name: Test
+        run: python -m pytest tests

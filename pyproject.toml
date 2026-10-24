@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-agent-audit"
+version = "0.1.0"
+description = "EgressSentinel（出口哨兵，原名 AI-AGENT-AUDIT）：本机 AI Agent 外发流量审计工具（Windows 优先）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "EgressSentinel contributors" }]
+dependencies = [
+    "mitmproxy>=10.2",
+    "typer>=0.12",
+    "rich>=13.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "psutil>=5.9",
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.4"]
+web = ["fastapi>=0.110", "uvicorn>=0.29"]
+build = ["pyinstaller>=6.0"]
+
+[project.scripts]
+aaa = "aaa.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+aaa = ["web/static/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
