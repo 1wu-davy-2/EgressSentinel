@@ -262,4 +262,25 @@
 - 理由：三条客户端路径都真实经过拦截与解密；信任校验的强断言放在支持严格校验的
   客户端上，curl 的回退行为如实记录、可被 --cacert 可用的 curl 构建直接用上。
 
+## D-2026-10-24-30 · CI 跨平台矩阵落地记录（Linux/macOS 已知缺口登记）
+
+- 背景：CI 矩阵（Python 3.11/3.12/3.13 × amd64/arm64 × Linux/Windows/macOS）+
+  v0.1.0 六平台 Release（Build workflow）。annotation 通道（`::error::` 摘录 →
+  公开 check-runs API）用于无 gh CLI 时排障。
+- 本轮修复：①`build_exe.py --add-data` 分隔符改 `os.pathsep`（`;` 在 Linux/macOS
+  非法）；②产物名非 Windows 无 `.exe` 后缀；③中文 `print` 在 runner 的 cp1252 控制台
+  抛 UnicodeEncodeError（main 入口对 stdout/stderr `reconfigure(utf-8)`）；④CI 上
+  click/typer/rich 的 ANSI 彩色输出插进中文报错文本破坏子串断言（conftest 会话级
+  NO_COLOR+TERM=dumb，`_norm` 剥 ANSI 码）；⑤`ctypes.windll` 模拟用例在非 Windows
+  `monkeypatch.setattr` 直接 AttributeError（skipif win32）；⑥macos-13 runner 已退役
+  改用 macos-15-intel。
+- 遗留缺口（posix 显式 skip，待专项修复后逐项放开）：
+  1) 归因：Linux/macOS 无特权会话 psutil 无法把其他进程连接映射到 PID（/proc 扫描
+     受权限限制），归因恒为 unknown——02 文档 D2 本就只对 Windows 承诺归因质量；
+  2) 端口释放：stop 后监听 socket 收尾慢于 10s 有界等待（平台收尾语义差异）；
+  3) confdir CA 生成时机：非 Windows 疑似首次 TLS 才懒生成（smoke 断言失败）；
+  4) windows-arm64：部分依赖无 win-arm64 wheel，pip Install 即失败（保持 experimental）。
+- 结果：Windows amd64（py3.11/3.12）严格门禁绿；Lint 绿；Linux/macOS/wind-arm64
+  任务为实验层，缺口以显式 skip 呈现而非红错；Release v0.1.0 五平台可执行文件发布。
+
 

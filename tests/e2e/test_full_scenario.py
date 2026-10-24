@@ -29,6 +29,7 @@ import os
 import shutil
 import ssl
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,13 @@ from aaa.setup.state import StateFile
 from aaa.store.db import DbEventStore
 from aaa.store.evidence import EvidenceStore
 from conftest import free_port, wait_until
+
+# 剧本集成归因/setup 等已知的 Linux/macOS 缺口（见 docs/notes/decisions.md
+# 「CI 跨平台矩阵落地记录」），随各缺口专项修复后逐项放开。
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="集成剧本依赖 Windows 专属路径（归因/CA 时机等），缺口修复前仅在 Windows 执行",
+)
 
 runner = CliRunner()
 

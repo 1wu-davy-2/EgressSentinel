@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import httpx
@@ -22,6 +23,14 @@ from aaa.capture.engine import ProxyConfig, start_in_background
 from aaa.store.evidence import EvidenceStore
 from aaa.store.jsonl import JsonlEventStore
 from conftest import free_port, wait_until
+
+# Linux/macOS：无特权会话里 psutil 无法把其他进程的连接映射到 PID（/proc 扫描受
+# 权限限制），归因恒为 unknown；02 文档 D2 本就只对 Windows 承诺归因质量。
+# 缺口登记见 docs/notes/decisions.md「CI 跨平台矩阵落地记录」。
+pytestmark = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Linux/macOS 无特权会话连接表无 PID 映射，归因断言仅 Windows 有效（02 文档 D2）",
+)
 
 #: T2.3 验收线
 ACCURACY_THRESHOLD = 0.90
