@@ -112,5 +112,15 @@ def test_stop_is_graceful_and_repeatable(data_dir: Path) -> None:
     handle = start_in_background(config, [])
     handle.stop()
     handle.stop()  # 二次 stop 不抛异常
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        assert probe.connect_ex(("127.0.0.1", port)) != 0, "代理退出后端口应已释放"
+    # Linux 上监听 socket 释放比 Windows 慢（TIME_WAIT/线程收尾），给足有界等待
+    import time
+
+    deadline = time.monotonic() + 10.0
+    released = False
+    while time.monotonic() < deadline:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if probe.connect_ex(("127.0.0.1", port)) != 0:
+                released = True
+                break
+        time.sleep(0.2)
+    assert released, "代理退出后 10 秒内端口未释放"

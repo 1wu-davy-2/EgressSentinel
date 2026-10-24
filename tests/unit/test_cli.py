@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -13,10 +14,12 @@ from aaa.cli import app
 
 runner = CliRunner()
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 
 def _norm(text: str) -> str:
-    """去掉空白差异，避免 rich 换行影响断言。"""
-    return " ".join(text.split())
+    """去掉 ANSI 颜色码与空白差异（rich 换行/CI 彩色输出不影响断言）。"""
+    return " ".join(_ANSI_RE.sub("", text).split())
 
 
 def test_aaa_help_runs() -> None:

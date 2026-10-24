@@ -9,15 +9,34 @@ from __future__ import annotations
 
 import datetime as _dt
 import ipaddress
+import os
 import socket
 import ssl
 import threading
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 from aaa.config import AppPaths
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _force_plain_output() -> Iterator[None]:
+    """禁用 CLI 测试的彩色输出：CI 上 click/typer/rich 可能强制 ANSI 颜色码，
+    转义序列插进中文报错文本会破坏子串断言（本地无 TTY 不显色，故只在 CI 复现）。"""
+    old = {k: os.environ.get(k) for k in ("NO_COLOR", "TERM") if k in os.environ}
+    os.environ["NO_COLOR"] = "1"
+    os.environ["TERM"] = "dumb"
+    try:
+        yield
+    finally:
+        for key, value in old.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def free_port() -> int:

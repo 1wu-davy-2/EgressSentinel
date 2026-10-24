@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import ctypes
+import sys
 
 import pytest
 
 from aaa.setup import admin
+
+# ctypes.windll 仅 Windows 存在：monkeypatch.setattr 要求属性先存在，
+# 非 Windows 平台这组模拟 Windows 行为的用例直接跳过；跨平台契约另由
+# test_non_windows_platform_returns_false / test_real_detection_returns_bool 覆盖。
+requires_windows = pytest.mark.skipif(
+    sys.platform != "win32", reason="ctypes.windll 仅 Windows 存在"
+)
 
 
 class FakeShell32:
@@ -45,16 +53,19 @@ class FakeWinDLL:
         self.kernel32 = FakeKernel32()
 
 
+@requires_windows
 def test_windows_admin_true(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ctypes, "windll", FakeWinDLL(shell32=FakeShell32(1)))
     assert admin.is_current_process_elevated() is True
 
 
+@requires_windows
 def test_windows_non_admin_false(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ctypes, "windll", FakeWinDLL(shell32=FakeShell32(0)))
     assert admin.is_current_process_elevated() is False
 
 
+@requires_windows
 def test_is_user_an_admin_failure_falls_back_to_token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         ctypes, "windll", FakeWinDLL(shell32=FakeShell32(OSError("missing entry point")))
@@ -76,6 +87,7 @@ def test_real_detection_returns_bool() -> None:
     assert isinstance(admin.is_current_process_elevated(), bool)
 
 
+@requires_windows
 @pytest.mark.parametrize("open_ok", [True, False])
 def test_token_fallback_never_raises(monkeypatch: pytest.MonkeyPatch, open_ok: bool) -> None:
     monkeypatch.setattr(

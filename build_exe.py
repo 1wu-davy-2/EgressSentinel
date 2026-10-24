@@ -151,6 +151,11 @@ def main() -> int:
     parser.add_argument("--no-clean", action="store_true", help="保留 build/ 工作目录")
     options = parser.parse_args()
 
+    # CI 的 Windows 控制台可能是 cp1252，直接 print 中文会 UnicodeEncodeError
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     if not _installed("PyInstaller"):
         print("PyInstaller 未安装：请先在 venv 内执行 pip install pyinstaller", file=sys.stderr)
         return 2
