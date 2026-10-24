@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://1wu-davy-2.github.io/EgressSentinel/sitemap.xml

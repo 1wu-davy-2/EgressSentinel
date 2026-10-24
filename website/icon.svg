@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#34d399"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#g)"/>
+  <!-- 盾牌：本机防线 -->
+  <path d="M32 11 L46 17.5 V31 C46 41.5 39.5 49 32 52.5 C24.5 49 18 41.5 18 31 V17.5 Z"
+        fill="none" stroke="#ffffff" stroke-width="3.6" stroke-linejoin="round"/>
+  <!-- 出站箭头：egress 外发流量 -->
+  <path d="M25.5 38.5 L37.5 26.5" stroke="#ffffff" stroke-width="3.6" stroke-linecap="round"/>
+  <path d="M30.5 25.5 H38 V33" stroke="#ffffff" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

@@ -1,24 +1,95 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="light">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="theme-color" content="#101828">
-<meta name="description" content="EgressSentinel（出口哨兵）：本机 AI Agent 外发流量审计代理。还原任意进程的 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。MIT 开源。">
-<title>EgressSentinel 出口哨兵 · 你的 AI Agent 在往哪里发送你的代码？</title>
+<meta name="theme-color" content="#f7faf9" id="metaThemeColor">
+<meta name="robots" content="index,follow">
+<meta name="author" content="1wu-davy-2">
+
+<!-- ===== SEO 词条：让搜索引擎/浏览器能搜到 ===== -->
+<title>EgressSentinel 出口哨兵 · AI Agent 出口流量审计与阻断工具 | AI Agent Egress Traffic Audit</title>
+<meta name="description" content="EgressSentinel（出口哨兵）是开源（MIT）的本机 AI Agent 出口流量审计代理：还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。支持 Windows / Linux / macOS。An open-source local audit proxy that inspects and blocks what AI agents send out.">
+<meta name="keywords" content="EgressSentinel,出口哨兵,AI Agent 审计,AI Agent 监控,AI Agent 流量审计,出口流量审计,外发流量监控,代码外泄检测,代码泄露防护,密钥泄露检测,密钥外发阻断,MITM 审计代理,mitmproxy,Claude Code 监控,Cursor 流量审计,Codex 审计,MCP 安全,Windows 网络审计,开源 DLP,AI 安全,ai agent audit,egress traffic audit,code exfiltration detection,secret leak prevention,LLM security,MITM audit proxy,open source DLP">
+<link rel="canonical" href="https://1wu-davy-2.github.io/EgressSentinel/">
+
+<!-- Open Graph / Twitter -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="EgressSentinel 出口哨兵">
+<meta property="og:title" content="EgressSentinel 出口哨兵 · 你的 AI Agent 在往哪里发送你的代码？">
+<meta property="og:description" content="本机 AI Agent 出口流量审计代理：HTTPS 明文级审计 · 进程归因 · 五维规则 · 事中阻断密钥与代码违规外发。开源 MIT。">
+<meta property="og:url" content="https://1wu-davy-2.github.io/EgressSentinel/">
+<meta property="og:image" content="https://1wu-davy-2.github.io/EgressSentinel/icon-512.png">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:locale:alternate" content="en_US">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="EgressSentinel 出口哨兵 · AI Agent 出口流量审计">
+<meta name="twitter:description" content="看清并阻断 AI Agent 的违规外发：明文审计、进程归因、密钥/代码外泄检测。">
+<meta name="twitter:image" content="https://1wu-davy-2.github.io/EgressSentinel/icon-512.png">
+
+<!-- 结构化数据：软件应用词条 -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "EgressSentinel",
+  "alternateName": ["出口哨兵", "EgressSentinel 出口哨兵", "AI Agent 出口流量审计工具"],
+  "description": "本机 AI Agent 出口流量审计与阻断工具：MITM 还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。开源 MIT。",
+  "keywords": "AI Agent 审计, 出口流量审计, 代码外泄检测, 密钥泄露检测, MITM 审计, 开源 DLP, ai agent audit, egress audit",
+  "applicationCategory": "SecurityApplication",
+  "operatingSystem": "Windows, Linux, macOS",
+  "programmingLanguage": "Python",
+  "license": "https://opensource.org/licenses/MIT",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
+  "inLanguage": ["zh-CN", "en"],
+  "author": {"@type": "Person", "name": "1wu-davy-2"},
+  "url": "https://1wu-davy-2.github.io/EgressSentinel/",
+  "downloadUrl": "https://github.com/1wu-davy-2/EgressSentinel/releases"
+}
+</script>
+
+<!-- ===== 图标 ===== -->
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
+/* ============ 主题令牌：默认浅色，[data-theme=dark] 覆盖为深色 ============ */
 :root{
+  --bg:#f7faf9; --bg2:#ffffff; --bg3:#eef4f2;
+  --card:#ffffff; --card2:#f6fafa;
+  --border:#e3ebee; --border2:#cfdbde;
+  --text:#132233; --muted:#51667c; --dim:#7d92a4;
+  --em:#0a9e73; --cy:#0891b2; --am:#b45309; --rd:#dc2626;
+  --grad:linear-gradient(120deg,#0ea372,#0891b2);
+  --grad-soft:linear-gradient(120deg,rgba(14,163,114,.09),rgba(8,145,178,.06));
+  --shadow:0 2px 12px rgba(19,34,51,.06);
+  --shadow-lg:0 18px 50px rgba(19,34,51,.10);
+  --nav-bg:rgba(255,255,255,.78);
+  --grid-line:rgba(19,34,51,.045);
+  --blob-op:.12;
+  /* 终端/代码/面板：两种主题下都保持深色表面（惯例，且对比强） */
+  --tbg:#0b1120; --tborder:#28344b; --ttext:#c9d4e5; --tdim:#677592;
+  --r:16px; --maxw:1120px;
+  font-size:16px;
+}
+html[data-theme="dark"]{
   --bg:#0a0f1c; --bg2:#101828; --bg3:#0d1526;
-  --card:rgba(255,255,255,.032); --card2:rgba(255,255,255,.05);
-  --border:rgba(255,255,255,.09); --border2:rgba(255,255,255,.14);
+  --card:rgba(255,255,255,.032); --card2:rgba(255,255,255,.055);
+  --border:rgba(255,255,255,.09); --border2:rgba(255,255,255,.16);
   --text:#e8edf6; --muted:#9aa5b8; --dim:#6b7689;
   --em:#34d399; --cy:#22d3ee; --am:#fbbf24; --rd:#f87171;
   --grad:linear-gradient(120deg,#34d399,#22d3ee);
-  --r:16px; --maxw:1120px;
-  font-size:16px;
+  --grad-soft:linear-gradient(120deg,rgba(52,211,153,.09),rgba(34,211,238,.05));
+  --shadow:0 2px 14px rgba(0,0,0,.35);
+  --shadow-lg:0 24px 60px rgba(0,0,0,.5);
+  --nav-bg:rgba(10,15,28,.72);
+  --grid-line:rgba(255,255,255,.03);
+  --blob-op:.16;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html{scroll-behavior:smooth}
@@ -26,6 +97,7 @@ body{
   font-family:"Inter","Noto Sans SC",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--bg); color:var(--text); line-height:1.65;
   -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  transition:background .25s,color .25s;
 }
 code,kbd,.mono{font-family:"Fira Code",ui-monospace,Consolas,monospace}
 a{color:inherit;text-decoration:none}
@@ -35,39 +107,44 @@ a{color:inherit;text-decoration:none}
 /* ===== 背景光斑 & 网格 ===== */
 .bg-fx{position:fixed;inset:0;z-index:-1;pointer-events:none;overflow:hidden}
 .bg-fx::before{content:"";position:absolute;inset:0;
-  background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);
+  background-image:linear-gradient(var(--grid-line) 1px,transparent 1px),
+    linear-gradient(90deg,var(--grid-line) 1px,transparent 1px);
   background-size:52px 52px;
   mask-image:radial-gradient(ellipse 90% 55% at 50% 0%,#000 35%,transparent 100%);
   -webkit-mask-image:radial-gradient(ellipse 90% 55% at 50% 0%,#000 35%,transparent 100%);}
-.blob{position:absolute;border-radius:50%;filter:blur(110px);opacity:.17}
+.blob{position:absolute;border-radius:50%;filter:blur(110px);opacity:var(--blob-op)}
 .blob.b1{width:560px;height:560px;background:#10b981;top:-200px;left:8%}
-.blob.b2{width:520px;height:520px;background:#06b6d4;top:-160px;right:6%;opacity:.13}
+.blob.b2{width:520px;height:520px;background:#06b6d4;top:-160px;right:6%}
 
 /* ===== 导航 ===== */
 nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
-  background:rgba(10,15,28,.72);border-bottom:1px solid var(--border)}
+  background:var(--nav-bg);border-bottom:1px solid var(--border)}
 .nav-inner{max-width:var(--maxw);margin:0 auto;padding:0 24px;height:64px;
   display:flex;align-items:center;gap:28px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.06rem;letter-spacing:.2px}
-.logo{width:30px;height:30px;border-radius:9px;background:var(--grad);display:grid;place-items:center;
-  color:#04121f;font-weight:800;font-size:.8rem;box-shadow:0 0 18px rgba(52,211,153,.35)}
+.logo{width:30px;height:30px;border-radius:9px;flex:none}
+.brand small{font-weight:500;color:var(--muted);font-size:.72rem;margin-left:-4px}
 .nav-links{display:flex;gap:22px;margin-left:auto;font-size:.9rem;color:var(--muted)}
 .nav-links a{transition:color .18s}
 .nav-links a:hover{color:var(--text)}
 .nav-cta{margin-left:6px;display:flex;gap:10px;align-items:center}
-@media(max-width:900px){.nav-links{display:none}}
+@media(max-width:980px){.nav-links{display:none}}
+@media(max-width:640px){.brand small{display:none}}
 
 /* ===== 按钮 & 徽章 ===== */
 .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border-radius:12px;
   font-size:.92rem;font-weight:600;border:1px solid transparent;cursor:pointer;transition:.18s;white-space:nowrap}
-.btn.primary{background:var(--grad);color:#04121f;box-shadow:0 6px 26px rgba(45,212,191,.28)}
-.btn.primary:hover{transform:translateY(-2px);box-shadow:0 10px 34px rgba(45,212,191,.4)}
-.btn.ghost{border-color:var(--border2);color:var(--text);background:rgba(255,255,255,.03)}
-.btn.ghost:hover{background:rgba(255,255,255,.08);transform:translateY(-2px)}
+.btn.primary{background:var(--grad);color:#fff;box-shadow:0 6px 22px rgba(10,150,120,.28)}
+.btn.primary:hover{transform:translateY(-2px);box-shadow:0 10px 30px rgba(10,150,120,.4)}
+html[data-theme="dark"] .btn.primary{color:#04121f}
+.btn.ghost{border-color:var(--border2);color:var(--text);background:var(--card)}
+.btn.ghost:hover{background:var(--card2);transform:translateY(-2px)}
 .btn.sm{padding:8px 16px;font-size:.84rem;border-radius:10px}
+.iconbtn{width:36px;height:36px;border-radius:10px;border:1px solid var(--border2);background:var(--card);
+  color:var(--muted);display:grid;place-items:center;cursor:pointer;font-size:1rem;transition:.18s}
+.iconbtn:hover{color:var(--text);background:var(--card2)}
 .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;
-  border:1px solid var(--border2);background:rgba(255,255,255,.04);
+  border:1px solid var(--border2);background:var(--card);
   font-size:.8rem;color:var(--muted)}
 .pill .dot{width:7px;height:7px;border-radius:50%;background:var(--em);
   box-shadow:0 0 10px var(--em);animation:pulse 2s infinite}
@@ -82,29 +159,30 @@ nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
 .hero-cta{margin-top:34px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap}
 .hero-platform{margin-top:18px;color:var(--dim);font-size:.84rem}
 
-/* ===== 终端 mockup ===== */
+/* ===== 终端 mockup（恒定深色表面） ===== */
 .term{max-width:820px;margin:56px auto 0;border-radius:14px;overflow:hidden;
-  border:1px solid var(--border2);background:#0b1120;
-  box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 60px rgba(34,211,238,.07);text-align:left}
-.term-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;background:rgba(255,255,255,.04);
-  border-bottom:1px solid var(--border)}
+  border:1px solid var(--tborder);background:var(--tbg);
+  box-shadow:var(--shadow-lg);text-align:left}
+.term-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;background:rgba(255,255,255,.045);
+  border-bottom:1px solid var(--tborder)}
 .term-bar i{width:11px;height:11px;border-radius:50%;display:block}
-.term-bar .t{margin-left:10px;color:var(--dim);font-size:.76rem}
-.term-body{padding:18px 20px;font-size:.8rem;line-height:1.9;overflow-x:auto}
+.term-bar .t{margin-left:10px;color:var(--tdim);font-size:.76rem}
+.term-body{padding:18px 20px;font-size:.8rem;line-height:1.9;overflow-x:auto;color:var(--ttext)}
 .term-body .cmd{color:#e8edf6}
-.term-body .cmd::before{content:"❯ ";color:var(--em)}
+.term-body .cmd::before{content:"❯ ";color:#34d399}
+.term-body .sys{color:var(--tdim)}
 .ev{display:flex;gap:10px;align-items:baseline;white-space:nowrap}
 .tag{font-size:.68rem;font-weight:700;padding:1px 9px;border-radius:6px;letter-spacing:.5px}
-.tag.block{color:var(--rd);background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3)}
-.tag.alert{color:var(--am);background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3)}
-.tag.allow{color:var(--em);background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3)}
-.tag.confirm{color:var(--cy);background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3)}
-.ev .who{color:var(--cy)} .ev .to{color:#7aa2f7} .ev .why{color:var(--dim)}
-.cursor{display:inline-block;width:8px;height:15px;background:var(--em);vertical-align:-2px;animation:blink 1.1s steps(1) infinite}
+.tag.block{color:#f87171;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3)}
+.tag.alert{color:#fbbf24;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3)}
+.tag.allow{color:#34d399;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.3)}
+.tag.confirm{color:#22d3ee;background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3)}
+.ev .who{color:#22d3ee} .ev .to{color:#7aa2f7} .ev .why{color:var(--tdim)}
+.cursor{display:inline-block;width:8px;height:15px;background:#34d399;vertical-align:-2px;animation:blink 1.1s steps(1) infinite}
 @keyframes blink{50%{opacity:0}}
 
 /* ===== 统计带 ===== */
-.stats{border-block:1px solid var(--border);background:rgba(255,255,255,.015)}
+.stats{border-block:1px solid var(--border);background:var(--card)}
 .stats-inner{max-width:var(--maxw);margin:0 auto;padding:30px 24px;display:grid;
   grid-template-columns:repeat(4,1fr);gap:16px;text-align:center}
 .stat .n{font-size:1.7rem;font-weight:800}
@@ -113,7 +191,7 @@ nav{position:sticky;top:0;z-index:50;backdrop-filter:blur(14px);
 
 /* ===== 通用 section ===== */
 section{padding:84px 0}
-.sec-head{text-align:center;max-width:640px;margin:0 auto 52px}
+.sec-head{text-align:center;max-width:680px;margin:0 auto 52px}
 .eyebrow{display:inline-block;font-size:.76rem;font-weight:700;letter-spacing:2.5px;
   color:var(--em);text-transform:uppercase;margin-bottom:14px}
 .sec-head h2{font-size:clamp(1.55rem,3.4vw,2.15rem);font-weight:800;letter-spacing:-.01em}
@@ -124,75 +202,83 @@ section{padding:84px 0}
 @media(max-width:960px){.grid3{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:640px){.grid3{grid-template-columns:1fr}}
 .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);
-  padding:26px 24px;transition:.2s;position:relative;overflow:hidden}
+  padding:26px 24px;transition:.2s;position:relative;overflow:hidden;box-shadow:var(--shadow)}
 .card:hover{transform:translateY(-4px);border-color:var(--border2);background:var(--card2)}
 .card .ic{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;
-  font-size:1.25rem;background:rgba(52,211,153,.1);border:1px solid rgba(52,211,153,.22);margin-bottom:16px}
+  font-size:1.25rem;background:rgba(14,163,114,.1);border:1px solid rgba(14,163,114,.25);margin-bottom:16px}
+html[data-theme="dark"] .card .ic{background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.22)}
 .card h3{font-size:1.02rem;font-weight:700;margin-bottom:8px}
 .card p{color:var(--muted);font-size:.88rem}
+.card p code{background:var(--bg3);padding:1px 6px;border-radius:5px;font-size:.78rem;color:var(--cy)}
+html[data-theme="dark"] .card p code{background:rgba(255,255,255,.07)}
 
 /* ===== 对比表 ===== */
 .cmp{max-width:920px;margin:0 auto;border:1px solid var(--border);border-radius:var(--r);
-  overflow:hidden;background:var(--card)}
+  overflow:hidden;background:var(--card);box-shadow:var(--shadow)}
 .cmp table{width:100%;border-collapse:collapse;font-size:.87rem}
 .cmp th,.cmp td{padding:13px 18px;text-align:center;border-bottom:1px solid var(--border)}
-.cmp th{background:rgba(255,255,255,.045);font-weight:700;font-size:.8rem;color:var(--muted)}
+.cmp th{background:var(--bg3);font-weight:700;font-size:.8rem;color:var(--muted)}
 .cmp td:first-child,.cmp th:first-child{text-align:left;color:var(--muted)}
 .cmp tr:last-child td{border-bottom:none}
 .cmp .yes{color:var(--em);font-weight:700}.cmp .no{color:var(--rd)}.cmp .part{color:var(--am)}
-.cmp td.hi{background:rgba(52,211,153,.05)}
+.cmp td.hi{background:rgba(14,163,114,.06)}
+html[data-theme="dark"] .cmp td.hi{background:rgba(52,211,153,.05)}
+@media(max-width:720px){.cmp{overflow-x:auto}.cmp table{min-width:640px}}
 
 /* ===== 界面 tabs ===== */
 .tabs{display:flex;gap:10px;justify-content:center;margin-bottom:26px;flex-wrap:wrap}
 .tab{padding:9px 20px;border-radius:10px;border:1px solid var(--border2);color:var(--muted);
-  font-size:.86rem;cursor:pointer;background:transparent;transition:.18s;font-family:inherit}
-.tab.on{background:var(--grad);color:#04121f;font-weight:700;border-color:transparent}
+  font-size:.86rem;cursor:pointer;background:var(--card);transition:.18s;font-family:inherit}
+.tab.on{background:var(--grad);color:#fff;font-weight:700;border-color:transparent}
+html[data-theme="dark"] .tab.on{color:#04121f}
 .panel{display:none}
 .panel.on{display:block;animation:fade .3s}
 @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1}}
 
-/* 面板 mockup */
-.dash{max-width:920px;margin:0 auto;border-radius:14px;border:1px solid var(--border2);
-  background:#0b1120;overflow:hidden;box-shadow:0 30px 70px rgba(0,0,0,.5);text-align:left}
-.dash-top{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--border);
-  background:rgba(255,255,255,.035);font-size:.82rem;color:var(--muted)}
-.dash-top .url{background:rgba(0,0,0,.35);border:1px solid var(--border);border-radius:8px;
-  padding:5px 14px;font-size:.74rem;color:var(--dim)}
+/* 面板 mockup（恒定深色表面） */
+.dash{max-width:920px;margin:0 auto;border-radius:14px;border:1px solid var(--tborder);
+  background:var(--tbg);overflow:hidden;box-shadow:var(--shadow-lg);text-align:left}
+.dash-top{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--tborder);
+  background:rgba(255,255,255,.04);font-size:.82rem;color:#9aa5b8}
+.dash-top .url{background:rgba(0,0,0,.35);border:1px solid var(--tborder);border-radius:8px;
+  padding:5px 14px;font-size:.74rem;color:var(--tdim)}
 .dash-body{display:grid;grid-template-columns:200px 1fr;min-height:340px}
 @media(max-width:720px){.dash-body{grid-template-columns:1fr}.dash-side{display:none}}
-.dash-side{border-right:1px solid var(--border);padding:14px;font-size:.82rem;color:var(--muted)}
+.dash-side{border-right:1px solid var(--tborder);padding:14px;font-size:.82rem;color:#9aa5b8}
 .dash-side div{padding:8px 10px;border-radius:8px;margin-bottom:2px}
-.dash-side .on{background:rgba(52,211,153,.1);color:var(--text)}
+.dash-side .on{background:rgba(52,211,153,.12);color:#e8edf6}
 .dash-main{padding:16px}
 .row{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;
-  border:1px solid transparent;font-size:.8rem;margin-bottom:6px;background:rgba(255,255,255,.022)}
+  border:1px solid transparent;font-size:.8rem;margin-bottom:6px;background:rgba(255,255,255,.025)}
 .row.block{border-color:rgba(248,113,113,.35)}
 .row.alert{border-color:rgba(251,191,36,.3)}
 .row .path{color:#7aa2f7;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.row .proc{color:var(--dim);font-size:.72rem}
-.masked{background:rgba(248,113,113,.15);border-radius:4px;padding:0 5px;color:var(--rd);
+.row .proc{color:var(--tdim);font-size:.72rem}
+.masked{background:rgba(248,113,113,.15);border-radius:4px;padding:0 5px;color:#f87171;
   font-family:"Fira Code",monospace;font-size:.72rem}
-.dash-note{padding:10px 18px;border-top:1px solid var(--border);color:var(--dim);font-size:.74rem;
+.dash-note{padding:10px 18px;border-top:1px solid var(--tborder);color:var(--tdim);font-size:.74rem;
   display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px}
 
 /* ===== 快速开始 / 代码 ===== */
 .split{display:grid;grid-template-columns:1fr 1.1fr;gap:44px;align-items:center;max-width:1000px;margin:0 auto}
 @media(max-width:880px){.split{grid-template-columns:1fr}}
-.codecard{border-radius:14px;border:1px solid var(--border2);background:#0b1120;overflow:hidden;
-  box-shadow:0 24px 60px rgba(0,0,0,.45)}
+.codecard{border-radius:14px;border:1px solid var(--tborder);background:var(--tbg);overflow:hidden;
+  box-shadow:var(--shadow-lg)}
 .codecard .path{display:flex;justify-content:space-between;align-items:center;
-  padding:10px 16px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.04);
-  color:var(--dim);font-size:.76rem;font-family:"Fira Code",monospace}
-.copy{cursor:pointer;border:1px solid var(--border2);background:transparent;color:var(--muted);
+  padding:10px 16px;border-bottom:1px solid var(--tborder);background:rgba(255,255,255,.045);
+  color:var(--tdim);font-size:.76rem;font-family:"Fira Code",monospace}
+.copy{cursor:pointer;border:1px solid var(--tborder);background:transparent;color:#9aa5b8;
   border-radius:7px;padding:3px 10px;font-size:.7rem;font-family:inherit;transition:.15s}
-.copy:hover{color:var(--text);background:rgba(255,255,255,.06)}
-.codecard pre{padding:18px 20px;overflow-x:auto;font-size:.78rem;line-height:1.85;color:#c9d4e5}
+.copy:hover{color:#e8edf6;background:rgba(255,255,255,.07)}
+.codecard pre{padding:18px 20px;overflow-x:auto;font-size:.78rem;line-height:1.85;color:var(--ttext)}
 .k{color:#7aa2f7}.s{color:#a5d6a7}.c{color:#586a86}.v{color:#e8c07d}.h{color:#22d3ee}
 .feat-list{display:flex;flex-direction:column;gap:18px}
 .feat-item{display:flex;gap:14px}
 .feat-item .dot{flex:none;width:10px;height:10px;border-radius:50%;background:var(--grad);margin-top:7px}
 .feat-item h4{font-size:.95rem;font-weight:700}
 .feat-item p{color:var(--muted);font-size:.86rem}
+.feat-item p code{background:var(--bg3);padding:1px 6px;border-radius:5px;font-size:.78rem;color:var(--cy)}
+html[data-theme="dark"] .feat-item p code{background:rgba(255,255,255,.07)}
 
 /* ===== 事件流 marquee ===== */
 .marq-wrap{max-width:100%;overflow:hidden;position:relative;
@@ -202,13 +288,13 @@ section{padding:84px 0}
 .marq:hover{animation-play-state:paused}
 @keyframes scroll{to{transform:translateX(-50%)}}
 .chip{display:flex;align-items:center;gap:10px;padding:12px 18px;border-radius:12px;
-  border:1px solid var(--border);background:var(--card);font-size:.78rem;white-space:nowrap}
-.chip .host{color:#7aa2f7;font-family:"Fira Code",monospace;font-size:.72rem}
+  border:1px solid var(--border);background:var(--card);font-size:.78rem;white-space:nowrap;box-shadow:var(--shadow)}
+.chip .host{color:var(--cy);font-family:"Fira Code",monospace;font-size:.72rem}
 
 /* ===== FAQ ===== */
 .faq{max-width:760px;margin:0 auto}
 details{border:1px solid var(--border);border-radius:13px;background:var(--card);
-  margin-bottom:12px;overflow:hidden;transition:.2s}
+  margin-bottom:12px;overflow:hidden;transition:.2s;box-shadow:var(--shadow)}
 details[open]{border-color:var(--border2);background:var(--card2)}
 summary{padding:18px 22px;font-weight:600;font-size:.94rem;cursor:pointer;list-style:none;
   display:flex;justify-content:space-between;align-items:center;gap:12px}
@@ -216,15 +302,16 @@ summary::-webkit-details-marker{display:none}
 summary::after{content:"+";color:var(--em);font-size:1.25rem;font-weight:400;transition:.2s;flex:none}
 details[open] summary::after{transform:rotate(45deg)}
 details .a{padding:0 22px 18px;color:var(--muted);font-size:.87rem}
-details .a code{background:rgba(255,255,255,.07);padding:1px 7px;border-radius:5px;font-size:.8rem;color:var(--cy)}
+details .a code{background:var(--bg3);padding:1px 7px;border-radius:5px;font-size:.8rem;color:var(--cy)}
+html[data-theme="dark"] details .a code{background:rgba(255,255,255,.07)}
 
 /* ===== CTA & footer ===== */
 .cta-box{max-width:820px;margin:0 auto;text-align:center;border-radius:22px;
   border:1px solid var(--border2);padding:64px 32px;position:relative;overflow:hidden;
-  background:linear-gradient(180deg,rgba(52,211,153,.07),rgba(34,211,238,.04))}
+  background:var(--grad-soft)}
 .cta-box h2{font-size:clamp(1.5rem,3.2vw,2.05rem);font-weight:800}
 .cta-box p{color:var(--muted);margin:14px 0 30px}
-footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(255,255,255,.012)}
+footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--card)}
 .foot-grid{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:32px;padding-bottom:40px}
 @media(max-width:760px){.foot-grid{grid-template-columns:repeat(2,1fr)}}
 .foot-grid h4{font-size:.8rem;color:var(--dim);letter-spacing:1px;margin-bottom:14px;font-weight:600}
@@ -240,18 +327,20 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <!-- ============ 导航 ============ -->
 <nav>
   <div class="nav-inner">
-    <a class="brand" href="#top"><span class="logo">ES</span>EgressSentinel</a>
+    <a class="brand" href="#top"><img class="logo" src="icon.svg" alt="EgressSentinel logo">EgressSentinel <small data-i18n="brand.cn">出口哨兵</small></a>
     <div class="nav-links">
-      <a href="#why">为什么需要</a>
-      <a href="#features">核心能力</a>
-      <a href="#choice">方案对比</a>
-      <a href="#ui">操作界面</a>
-      <a href="#quickstart">快速开始</a>
-      <a href="#faq">常见问题</a>
+      <a href="#why" data-i18n="nav.why">为什么需要</a>
+      <a href="#features" data-i18n="nav.features">核心能力</a>
+      <a href="#choice" data-i18n="nav.choice">方案对比</a>
+      <a href="#ui" data-i18n="nav.ui">操作界面</a>
+      <a href="#quickstart" data-i18n="nav.quickstart">快速开始</a>
+      <a href="#faq" data-i18n="nav.faq">常见问题</a>
     </div>
     <div class="nav-cta">
+      <button class="iconbtn" id="themeToggle" aria-label="切换主题">🌙</button>
+      <button class="iconbtn" id="langToggle" aria-label="切换语言 / Switch language">EN</button>
       <a class="btn ghost sm" href="https://github.com/1wu-davy-2/EgressSentinel" target="_blank" rel="noopener">GitHub</a>
-      <a class="btn primary sm" href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener">免费下载</a>
+      <a class="btn primary sm" href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener" data-i18n="nav.download">免费下载</a>
     </div>
   </div>
 </nav>
@@ -260,33 +349,29 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <header class="hero" id="top">
   <div class="wrap">
     <div class="hero-badge">
-      <span class="pill"><span class="dot"></span>🎉 v0.1.0 正式发布 · 五平台可执行文件已上线</span>
+      <span class="pill"><span class="dot"></span><span data-i18n="hero.badge">🎉 v0.1.0 正式发布 · 五平台可执行文件已上线</span></span>
     </div>
-    <h1>你的 AI Agent 在往哪里<br><span class="grad-text">发送你的代码？</span></h1>
-    <p class="sub">
-      <b>EgressSentinel（出口哨兵）</b>是部署在本机的 AI Agent 外发流量审计代理：
-      还原<b>任意进程</b>的 HTTPS 请求明文，把每条请求<b>归因到进程</b>，
-      五维规则<b>事中阻断</b>密钥与代码的违规外发——全程本地留痕，不依赖应用自愿接入。
-    </p>
+    <h1><span data-i18n="hero.h1a">你的 AI Agent 在往哪里</span><br><span class="grad-text" data-i18n="hero.h1b">发送你的代码？</span></h1>
+    <p class="sub" data-i18n="hero.sub"><b>EgressSentinel（出口哨兵）</b>是部署在本机的 AI Agent 外发流量审计代理：还原<b>任意进程</b>的 HTTPS 请求明文，把每条请求<b>归因到进程</b>，五维规则<b>事中阻断</b>密钥与代码的违规外发——全程本地留痕，不依赖应用自愿接入。</p>
     <div class="hero-cta">
-      <a class="btn primary" href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener">⬇ 免费下载</a>
-      <a class="btn ghost" href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/README.md" target="_blank" rel="noopener">查看文档</a>
+      <a class="btn primary" href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener" data-i18n="cta.download">⬇ 免费下载</a>
+      <a class="btn ghost" href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/README.md" target="_blank" rel="noopener" data-i18n="cta.docs">查看文档</a>
     </div>
-    <p class="hero-platform">支持 Windows 10/11（一等平台）· Linux · macOS · amd64 / arm64</p>
+    <p class="hero-platform" data-i18n="hero.platform">支持 Windows 10/11（一等平台）· Linux · macOS · amd64 / arm64</p>
 
     <!-- 终端 mockup：aaa run 实时事件流（场景取自 E2E 测试用例） -->
     <div class="term">
       <div class="term-bar">
         <i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i>
-        <span class="t mono">aaa run — EgressSentinel v0.1.0 · mode=dry-run</span>
+        <span class="t mono" data-i18n="term.title">aaa run — EgressSentinel v0.1.0 · mode=dry-run</span>
       </div>
       <div class="term-body mono">
         <div class="cmd">aaa run</div>
-        <div><span style="color:#586a86">[engine]</span> regular 代理已启动 127.0.0.1:8080 · 归因器就绪 · 策略 default.yaml(dry-run)</div>
-        <div class="ev"><span class="tag allow">ALLOW</span><span class="who">python.exe</span><span class="to">→ api.openai.com</span><span class="why">known_ai_api · 放行 · 已留痕</span></div>
-        <div class="ev"><span class="tag alert">ALERT</span><span class="who">node.exe (claude)</span><span class="to">→ unknown-cdn.example.com</span><span class="why">domain-unknown 首连告警</span></div>
-        <div class="ev"><span class="tag block">BLOCK</span><span class="who">node.exe</span><span class="to">→ api.example.com</span><span class="why">secret-leak 命中 AKIA**** · 403 已拦截</span></div>
-        <div class="ev"><span class="tag confirm">CONFIRM</span><span class="who">node.exe</span><span class="to">→ uploads.example.com</span><span class="why">code-bulk-upload 512KB 代码体 · 待确认</span></div>
+        <div class="sys" data-i18n="term.engine">[engine] regular 代理已启动 127.0.0.1:8080 · 归因器就绪 · 策略 default.yaml(dry-run)</div>
+        <div class="ev"><span class="tag allow">ALLOW</span><span class="who">python.exe</span><span class="to">→ api.openai.com</span><span class="why" data-i18n="term.ev1">known_ai_api · 放行 · 已留痕</span></div>
+        <div class="ev"><span class="tag alert">ALERT</span><span class="who">node.exe (claude)</span><span class="to">→ unknown-cdn.example.com</span><span class="why" data-i18n="term.ev2">domain-unknown 首连告警</span></div>
+        <div class="ev"><span class="tag block">BLOCK</span><span class="who">node.exe</span><span class="to">→ api.example.com</span><span class="why" data-i18n="term.ev3">secret-leak 命中 AKIA**** · 403 已拦截</span></div>
+        <div class="ev"><span class="tag confirm">CONFIRM</span><span class="who">node.exe</span><span class="to">→ uploads.example.com</span><span class="why" data-i18n="term.ev4">code-bulk-upload 512KB 代码体 · 待确认</span></div>
         <div class="cmd">aaa status<span class="cursor"></span></div>
       </div>
     </div>
@@ -296,10 +381,10 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <!-- ============ 2 · 统计带 ============ -->
 <div class="stats">
   <div class="stats-inner">
-    <div class="stat"><div class="n grad-text">270+</div><div class="l">自动化测试全绿</div></div>
-    <div class="stat"><div class="n grad-text">43</div><div class="l">密钥检测规则（gitleaks 移植）</div></div>
-    <div class="stat"><div class="n grad-text">5</div><div class="l">发布平台（Linux/macOS/Windows × amd64/arm64）</div></div>
-    <div class="stat"><div class="n grad-text">MIT</div><div class="l">开源协议 · 证据不出本机</div></div>
+    <div class="stat"><div class="n grad-text">270+</div><div class="l" data-i18n="stat.t1">自动化测试全绿</div></div>
+    <div class="stat"><div class="n grad-text">43</div><div class="l" data-i18n="stat.t2">密钥检测规则（gitleaks 移植）</div></div>
+    <div class="stat"><div class="n grad-text">5</div><div class="l" data-i18n="stat.t3">发布平台（Linux/macOS/Windows × amd64/arm64）</div></div>
+    <div class="stat"><div class="n grad-text">MIT</div><div class="l" data-i18n="stat.t4">开源协议 · 证据不出本机</div></div>
   </div>
 </div>
 
@@ -307,36 +392,36 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <section id="why">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">为什么需要</span>
-      <h2>AI Agent 有了读写你代码的权限，<br>谁在看着它的<span class="grad-text">网络出口</span>？</h2>
-      <p>Claude Code、Cursor、Codex、MCP 后台服务……它们都能读你的仓库与 .env，而它们外发的每一个 HTTPS 请求对你完全不可见。现有的方案各缺一角：</p>
+      <span class="eyebrow" data-i18n="why.eyebrow">为什么需要</span>
+      <h2><span data-i18n="why.h2a">AI Agent 有了读写你代码的权限，</span><br><span data-i18n="why.h2b">谁在看着它的</span><span class="grad-text" data-i18n="why.h2c">网络出口</span><span data-i18n="why.h2d">？</span></h2>
+      <p data-i18n="why.p">Claude Code、Cursor、Codex、MCP 后台服务……它们都能读你的仓库与 .env，而它们外发的每一个 HTTPS 请求对你完全不可见。现有的方案各缺一角：</p>
     </div>
     <div class="grid3">
-      <div class="card"><div class="ic">🔌</div><h3>LLM 网关管不住</h3><p>LiteLLM / Helicone 等需要应用"自愿"接入；改不了 base_url 的进程、任意第三方程序完全逃逸在监控之外。</p></div>
-      <div class="card"><div class="ic">🧱</div><h3>进程防火墙看不见</h3><p>Portmaster / simplewall 只能按进程放行或阻断端口，看不到请求内容——密钥藏在 POST body 里，它们无能为力。</p></div>
-      <div class="card"><div class="ic">🐧</div><h3>eBPF 上不了 Windows</h3><p>eCapture 等 Hook SSL 函数的方案只支持 Linux；Windows 上没有成熟的内核态明文抓取路线。</p></div>
-      <div class="card"><div class="ic">🏢</div><h3>企业 DLP 太重</h3><p>面向千台终端的集中管控，部署重、无 AI 语义，也不理解"Agent 上传整个代码库"意味着什么。</p></div>
-      <div class="card"><div class="ic">👁️</div><h3>已有的 MITM 工具只读</h3><p>llm-interceptor 能看不能拦、靠手工配代理；CC-Monitor 可拦但不支持 Windows、只认单一工具。</p></div>
-      <div class="card" style="border-color:rgba(52,211,153,.35)"><div class="ic">🛡️</div><h3>EgressSentinel 补上空白</h3><p><b>任意进程 + 内容级审计 + 事中阻断</b>的交集，目前没有现成方案同时满足——这就是本项目存在的原因。</p></div>
+      <div class="card"><div class="ic">🔌</div><h3 data-i18n="why.c1t">LLM 网关管不住</h3><p data-i18n="why.c1p">LiteLLM / Helicone 等需要应用"自愿"接入；改不了 base_url 的进程、任意第三方程序完全逃逸在监控之外。</p></div>
+      <div class="card"><div class="ic">🧱</div><h3 data-i18n="why.c2t">进程防火墙看不见</h3><p data-i18n="why.c2p">Portmaster / simplewall 只能按进程放行或阻断端口，看不到请求内容——密钥藏在 POST body 里，它们无能为力。</p></div>
+      <div class="card"><div class="ic">🐧</div><h3 data-i18n="why.c3t">eBPF 上不了 Windows</h3><p data-i18n="why.c3p">eCapture 等 Hook SSL 函数的方案只支持 Linux；Windows 上没有成熟的内核态明文抓取路线。</p></div>
+      <div class="card"><div class="ic">🏢</div><h3 data-i18n="why.c4t">企业 DLP 太重</h3><p data-i18n="why.c4p">面向千台终端的集中管控，部署重、无 AI 语义，也不理解"Agent 上传整个代码库"意味着什么。</p></div>
+      <div class="card"><div class="ic">👁️</div><h3 data-i18n="why.c5t">已有的 MITM 工具只读</h3><p data-i18n="why.c5p">llm-interceptor 能看不能拦、靠手工配代理；CC-Monitor 可拦但不支持 Windows、只认单一工具。</p></div>
+      <div class="card" style="border-color:rgba(14,163,114,.4)"><div class="ic">🛡️</div><h3 data-i18n="why.c6t">EgressSentinel 补上空白</h3><p data-i18n="why.c6p"><b>任意进程 + 内容级审计 + 事中阻断</b>的交集，目前没有现成方案同时满足——这就是本项目存在的原因。</p></div>
     </div>
   </div>
 </section>
 
 <!-- ============ 4 · 核心能力 ============ -->
-<section id="features" style="background:rgba(255,255,255,.012);border-block:1px solid var(--border)">
+<section id="features" style="background:var(--bg3);border-block:1px solid var(--border)">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">核心能力</span>
-      <h2>为什么选择 EgressSentinel？</h2>
-      <p>一个代理，看清并管住本机所有进程的外发流量</p>
+      <span class="eyebrow" data-i18n="feat.eyebrow">核心能力</span>
+      <h2 data-i18n="feat.h2">为什么选择 EgressSentinel？</h2>
+      <p data-i18n="feat.p">一个代理，看清并管住本机所有进程的外发流量</p>
     </div>
     <div class="grid3">
-      <div class="card"><div class="ic">🔍</div><h3>HTTPS 明文级审计</h3><p>基于 MIT 许可的 mitmproxy 引擎还原任意进程的完整请求/响应明文——URL、Header、Body 全部可查。</p></div>
-      <div class="card"><div class="ic">🎯</div><h3>归因到进程</h3><p>每条请求对应到发起进程的 PID、exe 路径、命令行与签名者；Node/Python/curl 客户端实测归因 100%。</p></div>
-      <div class="card"><div class="ic">⚖️</div><h3>五维规则引擎</h3><p>域名分类 / 进程画像 / 内容扫描 / 体量阈值 / 时间窗速率，YAML 策略热更新，支持 <code>aaa policy lint</code> 校验。</p></div>
-      <div class="card"><div class="ic">🔐</div><h3>密钥与代码外泄检测</h3><p>移植 gitleaks 43 条核心规则（AWS/GCP/Azure/OpenAI/私钥头/JWT…）+ PII 识别 + 代码密度/整库上传启发式。</p></div>
-      <div class="card"><div class="ic">🚦</div><h3>四级响应，事中阻断</h3><p>allow / alert / confirm / block。enforce 模式下违规请求被合成 403 拦截——目标服务器根本收不到；出厂默认 dry-run 只告警。</p></div>
-      <div class="card"><div class="ic">↩️</div><h3>完整可逆，本地留痕</h3><p>所有系统改动 journal-first 记录，<code>aaa teardown</code> 幂等还原（崩溃后仍完整还原）；证据仅存本机 SQLite，保留期可配。</p></div>
+      <div class="card"><div class="ic">🔍</div><h3 data-i18n="feat.c1t">HTTPS 明文级审计</h3><p data-i18n="feat.c1p">基于 MIT 许可的 mitmproxy 引擎还原任意进程的完整请求/响应明文——URL、Header、Body 全部可查。</p></div>
+      <div class="card"><div class="ic">🎯</div><h3 data-i18n="feat.c2t">归因到进程</h3><p data-i18n="feat.c2p">每条请求对应到发起进程的 PID、exe 路径、命令行与签名者；Node/Python/curl 客户端实测归因 100%。</p></div>
+      <div class="card"><div class="ic">⚖️</div><h3 data-i18n="feat.c3t">五维规则引擎</h3><p data-i18n="feat.c3p">域名分类 / 进程画像 / 内容扫描 / 体量阈值 / 时间窗速率，YAML 策略热更新，支持 <code>aaa policy lint</code> 校验。</p></div>
+      <div class="card"><div class="ic">🔐</div><h3 data-i18n="feat.c4t">密钥与代码外泄检测</h3><p data-i18n="feat.c4p">移植 gitleaks 43 条核心规则（AWS/GCP/Azure/OpenAI/私钥头/JWT…）+ PII 识别 + 代码密度/整库上传启发式。</p></div>
+      <div class="card"><div class="ic">🚦</div><h3 data-i18n="feat.c5t">四级响应，事中阻断</h3><p data-i18n="feat.c5p">allow / alert / confirm / block。enforce 模式下违规请求被合成 403 拦截——目标服务器根本收不到；出厂默认 dry-run 只告警。</p></div>
+      <div class="card"><div class="ic">↩️</div><h3 data-i18n="feat.c6t">完整可逆，本地留痕</h3><p data-i18n="feat.c6p">所有系统改动 journal-first 记录，<code>aaa teardown</code> 幂等还原（崩溃后仍完整还原）；证据仅存本机 SQLite，保留期可配。</p></div>
     </div>
   </div>
 </section>
@@ -345,58 +430,56 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <section id="choice">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">方案对比</span>
-      <h2>为什么是这套架构？</h2>
-      <p>选型调研覆盖 eBPF、WFP、ETW、TUN、企业 DLP 等路线（见仓库 docs/01 调研报告），结论一目了然：</p>
+      <span class="eyebrow" data-i18n="cmp.eyebrow">方案对比</span>
+      <h2 data-i18n="cmp.h2">为什么是这套架构？</h2>
+      <p data-i18n="cmp.p">选型调研覆盖 eBPF、WFP、ETW、TUN、企业 DLP 等路线（见仓库 docs/01 调研报告），结论一目了然：</p>
     </div>
     <div class="cmp">
       <table>
-        <tr><th>能力</th><th>LLM 网关</th><th>进程防火墙</th><th>eBPF 抓取</th><th>企业 DLP</th><th style="color:var(--em)">EgressSentinel</th></tr>
-        <tr><td>内容级审计（HTTPS 明文）</td><td class="part">仅接入流量</td><td class="no">✗</td><td class="yes">✓</td><td class="part">视产品</td><td class="hi yes">✓ 任意进程</td></tr>
-        <tr><td>进程归因</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="hi yes">✓</td></tr>
-        <tr><td>Windows 支持</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td><td class="hi yes">✓ 一等平台</td></tr>
-        <tr><td>事中阻断</td><td class="part">接入流量</td><td class="yes">✓ 仅端口</td><td class="no">✗</td><td class="yes">✓</td><td class="hi yes">✓ 403 / 连接级</td></tr>
-        <tr><td>无需应用配合</td><td class="no">须改接入</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="hi yes">✓</td></tr>
-        <tr><td>部署体量</td><td class="yes">轻</td><td class="yes">轻</td><td class="no">仅 Linux</td><td class="no">重</td><td class="hi yes">单文件 exe / pip</td></tr>
+        <tr><th data-i18n="cmp.f1">能力</th><th data-i18n="cmp.f2">LLM 网关</th><th data-i18n="cmp.f3">进程防火墙</th><th>eBPF</th><th data-i18n="cmp.f5">企业 DLP</th><th style="color:var(--em)">EgressSentinel</th></tr>
+        <tr><td data-i18n="cmp.r1">内容级审计（HTTPS 明文）</td><td class="part" data-i18n="cmp.p1">仅接入流量</td><td class="no">✗</td><td class="yes">✓</td><td class="part" data-i18n="cmp.p5a">视产品</td><td class="hi yes" data-i18n="cmp.h1">✓ 任意进程</td></tr>
+        <tr><td data-i18n="cmp.r2">进程归因</td><td class="no">✗</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="hi yes">✓</td></tr>
+        <tr><td data-i18n="cmp.r3">Windows 支持</td><td class="yes">✓</td><td class="yes">✓</td><td class="no">✗</td><td class="yes">✓</td><td class="hi yes" data-i18n="cmp.h3">✓ 一等平台</td></tr>
+        <tr><td data-i18n="cmp.r4">事中阻断</td><td class="part" data-i18n="cmp.p4">接入流量</td><td class="yes" data-i18n="cmp.p4b">✓ 仅端口</td><td class="no">✗</td><td class="yes">✓</td><td class="hi yes" data-i18n="cmp.h4">✓ 403 / 连接级</td></tr>
+        <tr><td data-i18n="cmp.r5">无需应用配合</td><td class="no" data-i18n="cmp.p5">须改接入</td><td class="yes">✓</td><td class="yes">✓</td><td class="yes">✓</td><td class="hi yes">✓</td></tr>
+        <tr><td data-i18n="cmp.r6">部署体量</td><td class="yes" data-i18n="cmp.h6a">轻</td><td class="yes" data-i18n="cmp.h6b">轻</td><td class="no" data-i18n="cmp.h6c">仅 Linux</td><td class="no" data-i18n="cmp.h6d">重</td><td class="hi yes" data-i18n="cmp.h6">单文件 exe / pip</td></tr>
       </table>
     </div>
-    <p style="text-align:center;color:var(--dim);font-size:.8rem;margin-top:16px">
-      采集双模式：regular（显式本地代理，无需管理员）／ local（WinDivert 透明抓取，按进程过滤，需管理员）
-    </p>
+    <p style="text-align:center;color:var(--dim);font-size:.8rem;margin-top:16px" data-i18n="cmp.note">采集双模式：regular（显式本地代理，无需管理员）／ local（WinDivert 透明抓取，按进程过滤，需管理员）</p>
   </div>
 </section>
 
 <!-- ============ 6 · 操作界面 ============ -->
-<section id="ui" style="background:rgba(255,255,255,.012);border-block:1px solid var(--border)">
+<section id="ui" style="background:var(--bg3);border-block:1px solid var(--border)">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">操作界面</span>
-      <h2>直观的本地面板</h2>
-      <p>事件列表、脱敏详情、统计与导出，全部只监听 127.0.0.1</p>
+      <span class="eyebrow" data-i18n="ui.eyebrow">操作界面</span>
+      <h2 data-i18n="ui.h2">直观的本地面板</h2>
+      <p data-i18n="ui.p">事件列表、脱敏详情、统计与导出，全部只监听 127.0.0.1</p>
     </div>
     <div class="tabs">
-      <button class="tab on" data-tab="p1">事件审计流</button>
-      <button class="tab" data-tab="p2">CLI 工作台</button>
-      <button class="tab" data-tab="p3">teardown 安全卸载</button>
+      <button class="tab on" data-tab="p1" data-i18n="ui.tab1">事件审计流</button>
+      <button class="tab" data-tab="p2" data-i18n="ui.tab2">CLI 工作台</button>
+      <button class="tab" data-tab="p3" data-i18n="ui.tab3">teardown 安全卸载</button>
     </div>
 
     <div class="panel on" id="p1">
       <div class="dash">
-        <div class="dash-top"><span class="logo" style="width:22px;height:22px;font-size:.6rem;border-radius:6px">ES</span>EgressSentinel · 本地面板 <span class="url mono">http://127.0.0.1:8787</span><span style="margin-left:auto;color:var(--em)">● 审计中</span></div>
+        <div class="dash-top"><img class="logo" style="width:22px;height:22px;border-radius:6px" src="icon.svg" alt=""><span>EgressSentinel</span> <span data-i18n="ui.dashtitle">· 本地面板</span> <span class="url mono">http://127.0.0.1:8787</span><span style="margin-left:auto;color:#34d399" data-i18n="ui.live">● 审计中</span></div>
         <div class="dash-body">
           <div class="dash-side">
-            <div class="on">📋 事件流</div><div>📊 统计</div><div>⚖️ 策略</div><div>🔔 待确认 (2)</div><div>🧾 导出</div>
+            <div class="on" data-i18n="ui.side1">📋 事件流</div><div data-i18n="ui.side2">📊 统计</div><div data-i18n="ui.side3">⚖️ 策略</div><div data-i18n="ui.side4">🔔 待确认 (2)</div><div data-i18n="ui.side5">🧾 导出</div>
           </div>
           <div class="dash-main mono">
             <div class="row block"><span class="tag block">BLOCK</span><span class="path">POST api.example.com/v1/chat · body 4.2KB</span><span class="masked">AKIA••••••</span></div>
-            <div class="row block" style="color:var(--dim);font-size:.72rem;padding-left:28px">↳ 命中 secret-leak (content) · 进程 node.exe #41233 · claude … · 403 已拦截</div>
-            <div class="row alert"><span class="tag alert">ALERT</span><span class="path">POST uploads.example.com/api · body 512KB</span><span class="proc">code-bulk-upload</span></div>
-            <div class="row"><span class="tag confirm">CONFIRM</span><span class="path">POST unknown-host.io/telemetry</span><span class="proc">domain-unknown</span></div>
+            <div class="row block" style="color:#677592;font-size:.72rem;padding-left:28px" data-i18n="ui.row2">↳ 命中 secret-leak (content) · 进程 node.exe #41233 · claude … · 403 已拦截</div>
+            <div class="row alert"><span class="tag alert">ALERT</span><span class="path">POST uploads.example.com/api · body 512KB</span><span class="proc" data-i18n="ui.row3">code-bulk-upload</span></div>
+            <div class="row"><span class="tag confirm">CONFIRM</span><span class="path">POST unknown-host.io/telemetry</span><span class="proc" data-i18n="ui.row4">domain-unknown</span></div>
             <div class="row"><span class="tag allow">ALLOW</span><span class="path">GET api.anthropic.com/v1/messages · body 12KB</span><span class="proc">known_ai_api</span></div>
-            <div class="row"><span class="tag allow">ALLOW</span><span class="path">GET pypi.org/simple · body 2KB</span><span class="proc">已放行</span></div>
+            <div class="row"><span class="tag allow">ALLOW</span><span class="path">GET pypi.org/simple · body 2KB</span><span class="proc" data-i18n="ui.row6">已放行</span></div>
           </div>
         </div>
-        <div class="dash-note"><span>密钥默认打码，<code class="mono" style="color:var(--cy)">?reveal=1</code> 显式解锁并记审计日志</span><span>CSV / JSON 一键导出</span></div>
+        <div class="dash-note"><span data-i18n="ui.note1">密钥默认打码，<code class="mono" style="color:#22d3ee">?reveal=1</code> 显式解锁并记审计日志</span><span data-i18n="ui.note2">CSV / JSON 一键导出</span></div>
       </div>
     </div>
 
@@ -405,13 +488,13 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
         <div class="term-bar"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i><span class="t mono">PowerShell</span></div>
         <div class="term-body mono">
           <div class="cmd">aaa setup --dry-run</div>
-          <div style="color:#586a86">将执行：① CA 导入 CurrentUser ② WinINET 代理 127.0.0.1:8080 ③ 8 个环境变量（NODE_EXTRA_CA_CERTS 等）</div>
-          <div class="cmd">aaa setup && aaa run</div>
-          <div><span style="color:#586a86">[engine]</span> 事件落 SQLite（data/audit.db）· 保留期 14 天</div>
+          <div class="sys" data-i18n="ui.ps1">将执行：① CA 导入 CurrentUser ② WinINET 代理 127.0.0.1:8080 ③ 8 个环境变量（NODE_EXTRA_CA_CERTS 等）</div>
+          <div class="cmd">aaa setup &amp;&amp; aaa run</div>
+          <div class="sys" data-i18n="ui.ps2">[engine] 事件落 SQLite（data/audit.db）· 保留期 14 天</div>
           <div class="cmd">aaa tail</div>
           <div class="ev"><span class="tag block">BLOCK</span><span class="who">node.exe</span><span class="to">→ api.example.com</span><span class="why">secret-leak</span></div>
           <div class="cmd">aaa report --json</div>
-          <div style="color:#586a86">{"by_verdict": {"block": 1, "alert": 2, "allow": 137}, "by_process": {"node.exe": 88, …}}</div>
+          <div class="sys">{"by_verdict": {"block": 1, "alert": 2, "allow": 137}, "by_process": {"node.exe": 88, …}}</div>
         </div>
       </div>
     </div>
@@ -421,11 +504,11 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
         <div class="term-bar"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i><span class="t mono">aaa teardown</span></div>
         <div class="term-body mono">
           <div class="cmd">aaa teardown</div>
-          <div><span style="color:#586a86">[teardown]</span> 逆序还原 3 项改动（依据 data/setup-state.json）：</div>
-          <div style="color:#586a86">  ① 删除环境变量 ×8（HKCU\Environment，含 WM_SETTINGCHANGE 广播）</div>
-          <div style="color:#586a86">  ② 还原 WinINET 代理（ProxyEnable=0，恢复旧值）</div>
-          <div style="color:#586a86">  ③ 按序列号精确卸载 CA（误删防护）</div>
-          <div style="color:var(--em)">✓ 全部还原 · 幂等：重复执行为 no-op · 崩溃后重启执行仍完整还原</div>
+          <div class="sys" data-i18n="ui.td1">[teardown] 逆序还原 3 项改动（依据 data/setup-state.json）：</div>
+          <div class="sys" data-i18n="ui.td2">  ① 删除环境变量 ×8（HKCU\Environment，含 WM_SETTINGCHANGE 广播）</div>
+          <div class="sys" data-i18n="ui.td3">  ② 还原 WinINET 代理（ProxyEnable=0，恢复旧值）</div>
+          <div class="sys" data-i18n="ui.td4">  ③ 按序列号精确卸载 CA（误删防护）</div>
+          <div style="color:#34d399" data-i18n="ui.td5">✓ 全部还原 · 幂等：重复执行为 no-op · 崩溃后重启执行仍完整还原</div>
         </div>
       </div>
     </div>
@@ -436,21 +519,21 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <section id="quickstart">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">开发者友好</span>
-      <h2>四条命令，开始审计</h2>
-      <p>下载单文件可执行（或 pip 源码安装），无需云端账号</p>
+      <span class="eyebrow" data-i18n="qs.eyebrow">开发者友好</span>
+      <h2 data-i18n="qs.h2">四条命令，开始审计</h2>
+      <p data-i18n="qs.p">下载单文件可执行（或 pip 源码安装），无需云端账号</p>
     </div>
     <div class="split">
       <div class="feat-list">
-        <div class="feat-item"><span class="dot"></span><div><h4>先预览，后实施</h4><p><code class="mono" style="color:var(--cy)">aaa setup --dry-run</code> 列出将做的全部系统改动；正式 setup 逐步确认并全部记录在案。</p></div></div>
-        <div class="feat-item"><span class="dot"></span><div><h4>dry-run 出厂默认</h4><p>只告警不阻断。观察无误后把策略改为 <code class="mono" style="color:var(--cy)">enforce</code>，违规请求即刻被 403 拦截。</p></div></div>
-        <div class="feat-item"><span class="dot"></span><div><h4>Node 系 Agent 也能抓</h4><p>setup 自动下发 <code class="mono" style="color:var(--cy)">NODE_USE_ENV_PROXY</code> / <code class="mono" style="color:var(--cy)">NODE_EXTRA_CA_CERTS</code> 等变量——Node 默认不读系统代理和证书库，这一步是关键。</p></div></div>
-        <div class="feat-item"><span class="dot"></span><div><h4>纯本地，零上传</h4><p>事件库与证据文件只存本机目录，保留期自动清理；没有任何遥测或云端组件。</p></div></div>
+        <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f1t">先预览，后实施</h4><p data-i18n="qs.f1p"><code>aaa setup --dry-run</code> 列出将做的全部系统改动；正式 setup 逐步确认并全部记录在案。</p></div></div>
+        <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f2t">dry-run 出厂默认</h4><p data-i18n="qs.f2p">只告警不阻断。观察无误后把策略改为 <code>enforce</code>，违规请求即刻被 403 拦截。</p></div></div>
+        <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f3t">Node 系 Agent 也能抓</h4><p data-i18n="qs.f3p">setup 自动下发 <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code> 等变量——Node 默认不读系统代理和证书库，这一步是关键。</p></div></div>
+        <div class="feat-item"><span class="dot"></span><div><h4 data-i18n="qs.f4t">纯本地，零上传</h4><p data-i18n="qs.f4p">事件库与证据文件只存本机目录，保留期自动清理；没有任何遥测或云端组件。</p></div></div>
       </div>
       <div>
         <div class="codecard">
-          <div class="path"><span>quickstart.ps1</span><button class="copy" data-copy="aaa setup --dry-run&#10;aaa setup&#10;aaa run&#10;aaa web">复制</button></div>
-          <pre><span class="c"># ① 预览系统改动（推荐第一步）</span>
+          <div class="path"><span>quickstart.ps1</span><button class="copy" data-copy="aaa setup --dry-run&#10;aaa setup&#10;aaa run&#10;aaa web" data-i18n="btn.copy">复制</button></div>
+          <pre data-i18n="qs.code1"><span class="c"># ① 预览系统改动（推荐第一步）</span>
 <span class="h">aaa</span> setup --dry-run
 <span class="c"># ② 下发 CA / 代理 / 环境变量（逐步确认）</span>
 <span class="h">aaa</span> setup
@@ -460,8 +543,8 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <span class="h">aaa</span> web</pre>
         </div>
         <div class="codecard" style="margin-top:16px">
-          <div class="path"><span>policies/default.yaml</span><button class="copy" data-copy="mode: dry-run  # 改为 enforce 启用真实阻断">复制</button></div>
-          <pre><span class="k">version</span>: <span class="v">1</span>
+          <div class="path"><span>policies/default.yaml</span><button class="copy" data-copy="mode: dry-run  # enforce 启用真实阻断" data-i18n="btn.copy2">复制</button></div>
+          <pre data-i18n="qs.code2"><span class="k">version</span>: <span class="v">1</span>
 <span class="k">mode</span>: <span class="s">dry-run</span>   <span class="c"># 出厂默认只告警；确认规则后改 enforce</span>
 <span class="k">content</span>:
   <span class="k">scanners</span>: [<span class="s">secrets</span>, <span class="s">pii</span>, <span class="s">code_leak</span>]
@@ -474,23 +557,23 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 </section>
 
 <!-- ============ 8 · 示例事件流 ============ -->
-<section style="padding:56px 0;background:rgba(255,255,255,.012);border-block:1px solid var(--border)">
+<section style="padding:56px 0;background:var(--bg3);border-block:1px solid var(--border)">
   <div class="wrap">
     <div class="sec-head" style="margin-bottom:36px">
-      <span class="eyebrow">审计事件示例</span>
-      <h2 style="font-size:1.5rem">看看哨兵会抓住什么</h2>
-      <p style="font-size:.86rem">以下事件流取自项目 E2E 测试场景（tests/e2e），非真实流量</p>
+      <span class="eyebrow" data-i18n="mq.eyebrow">审计事件示例</span>
+      <h2 style="font-size:1.5rem" data-i18n="mq.h2">看看哨兵会抓住什么</h2>
+      <p style="font-size:.86rem" data-i18n="mq.p">以下事件流取自项目 E2E 测试场景（tests/e2e），非真实流量</p>
     </div>
   </div>
   <div class="marq-wrap">
     <div class="marq mono" id="marq">
       <div class="chip"><span class="tag block">BLOCK</span>node.exe<span class="host">api.example.com</span><span class="masked">AKIA••••</span>secret-leak</div>
-      <div class="chip"><span class="tag alert">ALERT</span>node.exe<span class="host">uploads.example.com</span>512KB 代码体</div>
-      <div class="chip"><span class="tag confirm">CONFIRM</span>python.exe<span class="host">unknown-host.io</span>domain-unknown 首连</div>
-      <div class="chip"><span class="tag alert">ALERT</span>node.exe<span class="host">cdn.example.net</span>PII 命中 ×14（手机号/身份证）</div>
+      <div class="chip"><span class="tag alert">ALERT</span>node.exe<span class="host">uploads.example.com</span>512KB code</div>
+      <div class="chip"><span class="tag confirm">CONFIRM</span>python.exe<span class="host">unknown-host.io</span>domain-unknown</div>
+      <div class="chip"><span class="tag alert">ALERT</span>node.exe<span class="host">cdn.example.net</span>PII ×14</div>
       <div class="chip"><span class="tag allow">ALLOW</span>python.exe<span class="host">api.anthropic.com</span>known_ai_api</div>
       <div class="chip"><span class="tag block">BLOCK</span>curl.exe<span class="host">mal.example.com</span>domain-blocklist</div>
-      <div class="chip"><span class="tag alert">ALERT</span>node.exe<span class="host">api.example.com</span>60s 内 87 次请求（burst）</div>
+      <div class="chip"><span class="tag alert">ALERT</span>node.exe<span class="host">api.example.com</span>burst 87/min</div>
       <div class="chip"><span class="tag allow">ALLOW</span>git.exe<span class="host">github.com</span>code_hosting</div>
     </div>
   </div>
@@ -500,37 +583,37 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <section id="faq">
   <div class="wrap">
     <div class="sec-head">
-      <span class="eyebrow">常见问题</span>
-      <h2>有疑问？我们来解答</h2>
+      <span class="eyebrow" data-i18n="faq.eyebrow">常见问题</span>
+      <h2 data-i18n="faq.h2">有疑问？我们来解答</h2>
     </div>
     <div class="faq">
       <details open>
-        <summary>EgressSentinel 是免费的吗？数据会上传到哪里？</summary>
-        <div class="a">MIT 协议开源、完全免费。纯本地运行：事件库与证据只写在本机 <code>data/</code> 目录，保留期可配（<code>aaa trim</code>），没有任何遥测或云端组件。</div>
+        <summary data-i18n="faq.q1">EgressSentinel 是免费的吗？数据会上传到哪里？</summary>
+        <div class="a" data-i18n="faq.a1">MIT 协议开源、完全免费。纯本地运行：事件库与证据只写在本机 <code>data/</code> 目录，保留期可配（<code>aaa trim</code>），没有任何遥测或云端组件。</div>
       </details>
       <details>
-        <summary>为什么某个 AI Agent 的流量没被捕获？</summary>
-        <div class="a">Node.js 系工具（Claude Code、Cursor CLI 等）默认不读系统代理和 Windows 证书库。执行过 <code>aaa setup env</code>（注入 <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code> 等）并<b>重启该 Agent 进程</b>即可；Python 系对应 <code>REQUESTS_CA_BUNDLE</code>。追求全覆盖可用需管理员的 local 模式（WinDivert 透明抓取）。</div>
+        <summary data-i18n="faq.q2">为什么某个 AI Agent 的流量没被捕获？</summary>
+        <div class="a" data-i18n="faq.a2">Node.js 系工具（Claude Code、Cursor CLI 等）默认不读系统代理和 Windows 证书库。执行过 <code>aaa setup env</code>（注入 <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code> 等）并<b>重启该 Agent 进程</b>即可；Python 系对应 <code>REQUESTS_CA_BUNDLE</code>。追求全覆盖可用需管理员的 local 模式（WinDivert 透明抓取）。</div>
       </details>
       <details>
-        <summary>它会拖慢我的网络吗？</summary>
-        <div class="a">regular 模式是本地回环代理，无云端往返；内容扫描默认只处理每个请求的前 256KB，超大上传不会全文扫描；非审计目标域名跳过 body 扫描。</div>
+        <summary data-i18n="faq.q3">它会拖慢我的网络吗？</summary>
+        <div class="a" data-i18n="faq.a3">regular 模式是本地回环代理，无云端往返；内容扫描默认只处理每个请求的前 256KB，超大上传不会全文扫描；非审计目标域名跳过 body 扫描。</div>
       </details>
       <details>
-        <summary>杀毒软件报警了怎么办？</summary>
-        <div class="a">本地代理 + 安装根证书对应 MITRE ATT&amp;CK T1553.004，属预期行为，主流 EDR 可能有检测规则。regular 模式不加载任何驱动；本工具不隐藏自身行为，并提供完整卸载。请确认是你本人主动安装。</div>
+        <summary data-i18n="faq.q4">杀毒软件报警了怎么办？</summary>
+        <div class="a" data-i18n="faq.a4">本地代理 + 安装根证书对应 MITRE ATT&amp;CK T1553.004，属预期行为，主流 EDR 可能有检测规则。regular 模式不加载任何驱动；本工具不隐藏自身行为，并提供完整卸载。请确认是你本人主动安装。</div>
       </details>
       <details>
-        <summary>看到 CERTIFICATE_VERIFY_FAILED 是怎么回事？</summary>
-        <div class="a">目标进程尚未信任本工具的 CA——说明对应运行时的证书环境变量还没下发或进程没重启，按 FAQ 第 2 条处理；个别自带证书固定（pinning）的程序会持续失败，可加白名单降级为仅元数据审计。</div>
+        <summary data-i18n="faq.q5">看到 CERTIFICATE_VERIFY_FAILED 是怎么回事？</summary>
+        <div class="a" data-i18n="faq.a5">目标进程尚未信任本工具的 CA——说明对应运行时的证书环境变量还没下发或进程没重启，按上一条处理；个别自带证书固定（pinning）的程序会持续失败，可加白名单降级为仅元数据审计。</div>
       </details>
       <details>
-        <summary>如何完全卸载？</summary>
-        <div class="a">一条命令：<code>aaa teardown</code>。按改动日志逆序幂等还原——删除 CA（按序列号精确匹配）、还原系统代理设置、清理全部环境变量；即使代理中途崩溃，重启后执行仍能完整还原，重复执行无副作用。</div>
+        <summary data-i18n="faq.q6">如何完全卸载？</summary>
+        <div class="a" data-i18n="faq.a6">一条命令：<code>aaa teardown</code>。按改动日志逆序幂等还原——删除 CA（按序列号精确匹配）、还原系统代理设置、清理全部环境变量；即使代理中途崩溃，重启后执行仍能完整还原，重复执行无副作用。</div>
       </details>
       <details>
-        <summary>支持 Linux / macOS 吗？</summary>
-        <div class="a">v0.1.0 已发布五平台单文件可执行（Linux amd64/arm64、macOS amd64/arm64、Windows amd64）。Windows 是一等平台（归因、setup 下发完整可用）；Linux/macOS 的进程归因依赖特权会话，其余能力经 CI 矩阵回归，细节见仓库 <code>docs/notes/decisions.md</code> 缺口登记。</div>
+        <summary data-i18n="faq.q7">支持 Linux / macOS 吗？</summary>
+        <div class="a" data-i18n="faq.a7">v0.1.0 已发布五平台单文件可执行（Linux amd64/arm64、macOS amd64/arm64、Windows amd64）。Windows 是一等平台（归因、setup 下发完整可用）；Linux/macOS 的进程归因依赖特权会话，其余能力经 CI 矩阵回归，细节见仓库 <code>docs/notes/decisions.md</code> 缺口登记。</div>
       </details>
     </div>
   </div>
@@ -540,14 +623,14 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
 <section>
   <div class="wrap">
     <div class="cta-box">
-      <span class="pill" style="margin-bottom:20px"><span class="dot"></span>v0.1.0 · 五平台可执行文件</span>
-      <h2>准备好看清你的<span class="grad-text">出口流量</span>了吗？</h2>
-      <p>下载 EgressSentinel，五分钟开始审计你的 AI Agent 与任意应用</p>
+      <span class="pill" style="margin-bottom:20px"><span class="dot"></span><span data-i18n="cta.badge">v0.1.0 · 五平台可执行文件</span></span>
+      <h2><span data-i18n="cta.h2a">准备好看清你的</span><span class="grad-text" data-i18n="cta.h2b">出口流量</span><span data-i18n="cta.h2c">了吗？</span></h2>
+      <p data-i18n="cta.p">下载 EgressSentinel，五分钟开始审计你的 AI Agent 与任意应用</p>
       <div class="hero-cta">
-        <a class="btn primary" href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener">⬇ 立即下载</a>
-        <a class="btn ghost" href="https://github.com/1wu-davy-2/EgressSentinel" target="_blank" rel="noopener">查看 GitHub</a>
+        <a class="btn primary" href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener" data-i18n="cta.dl2">⬇ 立即下载</a>
+        <a class="btn ghost" href="https://github.com/1wu-davy-2/EgressSentinel" target="_blank" rel="noopener">GitHub</a>
       </div>
-      <p class="hero-platform" style="margin-top:18px">Windows · Linux · macOS（amd64 / arm64）· 也可 pip 源码安装</p>
+      <p class="hero-platform" style="margin-top:18px" data-i18n="cta.platform">Windows · Linux · macOS（amd64 / arm64）· 也可 pip 源码安装</p>
     </div>
   </div>
 </section>
@@ -557,44 +640,186 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:rgba(25
   <div class="wrap">
     <div class="foot-grid">
       <div>
-        <a class="brand" href="#top" style="margin-bottom:12px"><span class="logo">ES</span>EgressSentinel</a>
-        <p style="color:var(--muted);font-size:.86rem;margin-top:10px">本机 AI Agent 与应用程序外发流量审计系统。<br>守在你机器的网络出口处，不放过一次违规外发。</p>
+        <a class="brand" href="#top" style="margin-bottom:12px"><img class="logo" src="icon.svg" alt="">EgressSentinel <small data-i18n="brand.cn2">出口哨兵</small></a>
+        <p style="color:var(--muted);font-size:.86rem;margin-top:10px" data-i18n="foot.slogan">本机 AI Agent 与应用程序外发流量审计系统。守在你机器的网络出口处，不放过一次违规外发。</p>
       </div>
       <div>
-        <h4>产品</h4>
+        <h4 data-i18n="foot.h1">产品</h4>
         <ul>
-          <li><a href="#features">核心能力</a></li>
-          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener">下载</a></li>
-          <li><a href="#choice">方案对比</a></li>
+          <li><a href="#features" data-i18n="nav.features2">核心能力</a></li>
+          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener" data-i18n="foot.dl">下载</a></li>
+          <li><a href="#choice" data-i18n="nav.choice2">方案对比</a></li>
         </ul>
       </div>
       <div>
-        <h4>资源</h4>
+        <h4 data-i18n="foot.h2">资源</h4>
         <ul>
-          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/README.md" target="_blank" rel="noopener">README（快速开始）</a></li>
-          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/docs/01-research-report.md" target="_blank" rel="noopener">选型调研报告</a></li>
-          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/docs/02-technical-design.md" target="_blank" rel="noopener">技术设计文档</a></li>
-          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/docs/notes/decisions.md" target="_blank" rel="noopener">实施决策日志</a></li>
+          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/README.md" target="_blank" rel="noopener">README</a></li>
+          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/docs/01-research-report.md" target="_blank" rel="noopener" data-i18n="foot.doc1">选型调研报告</a></li>
+          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/docs/02-technical-design.md" target="_blank" rel="noopener" data-i18n="foot.doc2">技术设计文档</a></li>
+          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/blob/main/docs/notes/decisions.md" target="_blank" rel="noopener" data-i18n="foot.doc3">实施决策日志</a></li>
         </ul>
       </div>
       <div>
-        <h4>社区</h4>
+        <h4 data-i18n="foot.h3">社区</h4>
         <ul>
           <li><a href="https://github.com/1wu-davy-2/EgressSentinel" target="_blank" rel="noopener">GitHub</a></li>
-          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/issues" target="_blank" rel="noopener">问题反馈</a></li>
-          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener">更新日志</a></li>
+          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/issues" target="_blank" rel="noopener" data-i18n="foot.issue">问题反馈</a></li>
+          <li><a href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener" data-i18n="foot.changelog">更新日志</a></li>
         </ul>
       </div>
     </div>
     <div class="foot-note">
-      <span>© 2026 EgressSentinel · MIT 协议开源 · 仅用于授权设备 · 证据不离开本机</span>
-      <span>页面内容与仓库代码逐项核对（CLI 命令 / 规则数 / 平台产物）</span>
+      <span data-i18n="foot.copyright">© 2026 EgressSentinel · MIT 协议开源 · 仅用于授权设备 · 证据不离开本机</span>
+      <span data-i18n="foot.verified">页面内容与仓库代码逐项核对（CLI 命令 / 规则数 / 平台产物）</span>
     </div>
   </div>
 </footer>
 
 <script>
-// 标签页切换
+/* ============ 主题切换（默认浅色） ============ */
+(function(){
+  var root=document.documentElement, meta=document.getElementById("metaThemeColor");
+  var btn=document.getElementById("themeToggle");
+  function apply(t){
+    root.setAttribute("data-theme",t);
+    btn.textContent = t==="dark" ? "☀️" : "🌙";
+    meta.setAttribute("content", t==="dark" ? "#0a0f1c" : "#f7faf9");
+    try{localStorage.setItem("theme",t);}catch(e){}
+  }
+  var saved="light";
+  try{saved=localStorage.getItem("theme")||"light";}catch(e){}
+  apply(saved);
+  btn.addEventListener("click",function(){
+    apply(root.getAttribute("data-theme")==="dark"?"light":"dark");
+  });
+})();
+
+/* ============ 中英文切换（默认中文） ============ */
+var I18N_EN = {
+  "title": "EgressSentinel · AI Agent Egress Traffic Audit & Blocking",
+  "brand.cn": "出口哨兵", "brand.cn2": "出口哨兵",
+  "nav.why": "Why", "nav.features": "Features", "nav.choice": "Comparison", "nav.ui": "Interface",
+  "nav.quickstart": "Quick Start", "nav.faq": "FAQ", "nav.download": "Free Download",
+  "nav.features2": "Features", "nav.choice2": "Comparison",
+  "hero.badge": "🎉 v0.1.0 released · executables for 5 platforms",
+  "hero.h1a": "Where is your AI agent",
+  "hero.h1b": "sending your code?",
+  "hero.sub": "<b>EgressSentinel</b> is a local audit proxy for AI agents: it decrypts the HTTPS traffic of <b>any process</b>, attributes every request to its <b>source process</b>, and <b>blocks in-flight</b> secret and code exfiltration with a five-dimension ruleset — fully logged locally, no opt-in from apps required.",
+  "cta.download": "⬇ Free Download", "cta.docs": "Documentation",
+  "cta.badge": "v0.1.0 · executables for 5 platforms",
+  "cta.h2a": "Ready to see your ", "cta.h2b": "egress traffic", "cta.h2c": "?",
+  "cta.p": "Download EgressSentinel and start auditing your AI agents in five minutes",
+  "cta.dl2": "⬇ Download Now",
+  "cta.platform": "Windows · Linux · macOS (amd64 / arm64) · or install via pip",
+  "hero.platform": "Windows 10/11 (first-class) · Linux · macOS · amd64 / arm64",
+  "term.title": "aaa run — EgressSentinel v0.1.0 · mode=dry-run",
+  "term.engine": "[engine] regular proxy on 127.0.0.1:8080 · attributor ready · policy default.yaml (dry-run)",
+  "term.ev1": "known_ai_api · allowed · logged", "term.ev2": "domain-unknown first-seen alert",
+  "term.ev3": "secret-leak matched AKIA**** · blocked with 403",
+  "term.ev4": "code-bulk-upload 512KB body · awaiting confirmation",
+  "stat.t1": "automated tests green", "stat.t2": "secret-detection rules (ported from gitleaks)",
+  "stat.t3": "release platforms (Linux/macOS/Windows × amd64/arm64)", "stat.t4": "open-source license · evidence stays local",
+  "why.eyebrow": "Why you need it",
+  "why.h2a": "AI agents can read all your code —", "why.h2b": "who is watching their ", "why.h2c": "network exit", "why.h2d": "?",
+  "why.p": "Claude Code, Cursor, Codex, MCP servers… they can read your repos and .env files, while every HTTPS request they send is invisible to you. Existing solutions each miss a piece:",
+  "why.c1t": "LLM gateways can't enforce", "why.c1p": "LiteLLM / Helicone require apps to opt in. Any process that can't change its base_url — or any third-party app — escapes entirely.",
+  "why.c2t": "Process firewalls are blind", "why.c2p": "Portmaster / simplewall allow or block by process and port, but never see request content — a key hidden in a POST body slips right through.",
+  "why.c3t": "eBPF doesn't run on Windows", "why.c3p": "SSL-hooking tools like eCapture are Linux-only; there is no mature kernel-level cleartext capture on Windows.",
+  "why.c4t": "Enterprise DLP is too heavy", "why.c4p": "Built for thousands of managed endpoints — heavy to deploy, no AI semantics, and unaware of what \"an agent uploading a whole repo\" means.",
+  "why.c5t": "Existing MITM tools are read-only", "why.c5p": "llm-interceptor can watch but not block and needs manual proxy setup; CC-Monitor blocks but is Linux-only and tool-specific.",
+  "why.c6t": "EgressSentinel fills the gap", "why.c6p": "No existing tool combines <b>any process + content-level audit + in-flight blocking</b> — that intersection is exactly why this project exists.",
+  "feat.eyebrow": "Features", "feat.h2": "Why EgressSentinel?",
+  "feat.p": "One proxy to see and control all local egress traffic",
+  "feat.c1t": "HTTPS cleartext audit", "feat.c1p": "Built on the MIT-licensed mitmproxy engine, it restores full request/response cleartext of any process — URL, headers and body.",
+  "feat.c2t": "Per-process attribution", "feat.c2p": "Every request is attributed to its source PID, exe path, command line and signer; 100% attribution measured across Node/Python/curl clients.",
+  "feat.c3t": "Five-dimension ruleset", "feat.c3p": "Domain classes / process profiles / content scanners / size thresholds / time-window rates, hot-reloaded from YAML, validated by <code>aaa policy lint</code>.",
+  "feat.c4t": "Secret & code leak detection", "feat.c4p": "43 core rules ported from gitleaks (AWS/GCP/Azure/OpenAI/private keys/JWT…) plus PII detection and code-density / bulk-upload heuristics.",
+  "feat.c5t": "Four-level verdicts, blocked in flight", "feat.c5p": "allow / alert / confirm / block. Under enforce, violating requests get a synthetic 403 — the destination server never receives them; dry-run (alert-only) is the factory default.",
+  "feat.c6t": "Fully reversible, local evidence", "feat.c6p": "Every system change is journaled; <code>aaa teardown</code> restores everything idempotently (even after a crash). Evidence stays in local SQLite with configurable retention.",
+  "cmp.eyebrow": "Comparison", "cmp.h2": "Why this architecture?",
+  "cmp.p": "The research covered eBPF, WFP, ETW, TUN and enterprise DLP (see docs/01 in the repo). The summary:",
+  "cmp.f1": "Capability", "cmp.f2": "LLM gateway", "cmp.f3": "Process firewall", "cmp.f5": "Enterprise DLP",
+  "cmp.r1": "Content-level audit (HTTPS cleartext)", "cmp.p1": "opt-in traffic only", "cmp.p5a": "varies",
+  "cmp.h1": "✓ any process",
+  "cmp.r2": "Process attribution",
+  "cmp.r3": "Windows support", "cmp.h3": "✓ first-class",
+  "cmp.r4": "In-flight blocking", "cmp.p4": "opt-in traffic", "cmp.p4b": "✓ ports only", "cmp.h4": "✓ 403 / connection-level",
+  "cmp.r5": "No app cooperation required", "cmp.p5": "must opt in",
+  "cmp.r6": "Deployment weight", "cmp.h6a": "light", "cmp.h6b": "light", "cmp.h6c": "Linux only", "cmp.h6d": "heavy", "cmp.h6": "single exe / pip",
+  "cmp.note": "Two capture modes: regular (explicit local proxy, no admin) / local (transparent WinDivert capture with per-process filter, admin required)",
+  "ui.eyebrow": "Interface", "ui.h2": "An intuitive local dashboard",
+  "ui.p": "Event stream, redacted details, stats and export — all bound to 127.0.0.1",
+  "ui.tab1": "Audit stream", "ui.tab2": "CLI console", "ui.tab3": "teardown & uninstall",
+  "ui.dashtitle": "· local dashboard", "ui.live": "● auditing",
+  "ui.side1": "📋 Events", "ui.side2": "📊 Stats", "ui.side3": "⚖️ Policy", "ui.side4": "🔔 Pending (2)", "ui.side5": "🧾 Export",
+  "ui.row2": "↳ matched secret-leak (content) · process node.exe #41233 · claude … · blocked with 403",
+  "ui.row3": "code-bulk-upload", "ui.row4": "domain-unknown", "ui.row6": "allowed",
+  "ui.note1": "Secrets masked by default; <code class=\"mono\" style=\"color:#22d3ee\">?reveal=1</code> unlocks explicitly and is audit-logged",
+  "ui.note2": "One-click CSV / JSON export",
+  "ui.ps1": "Will do: ① import CA into CurrentUser ② set WinINET proxy 127.0.0.1:8080 ③ set 8 env vars (NODE_EXTRA_CA_CERTS etc.)",
+  "ui.ps2": "[engine] events stored in SQLite (data/audit.db) · 14-day retention",
+  "ui.td1": "[teardown] restoring 3 changes in reverse order (from data/setup-state.json):",
+  "ui.td2": "  ① remove 8 env vars (HKCU\\Environment, with WM_SETTINGCHANGE broadcast)",
+  "ui.td3": "  ② restore WinINET proxy (ProxyEnable=0, previous values)",
+  "ui.td4": "  ③ uninstall CA by exact serial number (no collateral removal)",
+  "ui.td5": "✓ all restored · idempotent: reruns are no-ops · works even after a crash",
+  "qs.eyebrow": "Developer friendly", "qs.h2": "Four commands to start auditing",
+  "qs.p": "Download a single-file executable (or pip install) — no cloud account needed",
+  "qs.f1t": "Preview before applying", "qs.f1p": "<code>aaa setup --dry-run</code> lists every system change first; the real setup confirms step by step and journals everything.",
+  "qs.f2t": "dry-run by default", "qs.f2p": "Alert-only out of the box. Once you trust the rules, switch the policy to <code>enforce</code> and violations get 403-blocked instantly.",
+  "qs.f3t": "Captures Node-based agents too", "qs.f3p": "setup injects <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code> — Node ignores the system proxy and cert store by default, so this step is essential.",
+  "qs.f4t": "Local only, zero upload", "qs.f4p": "The event store and evidence files stay in a local directory with automatic retention cleanup; no telemetry, no cloud components.",
+  "qs.code1": "<span class=\"c\"># 1. preview system changes (recommended first step)</span>\n<span class=\"h\">aaa</span> setup --dry-run\n<span class=\"c\"># 2. deploy CA / proxy / env vars (step-by-step confirm)</span>\n<span class=\"h\">aaa</span> setup\n<span class=\"c\"># 3. start the audit proxy (Ctrl+C to stop gracefully)</span>\n<span class=\"h\">aaa</span> run\n<span class=\"c\"># 4. open the dashboard http://127.0.0.1:8787</span>\n<span class=\"h\">aaa</span> web",
+  "qs.code2": "<span class=\"k\">version</span>: <span class=\"v\">1</span>\n<span class=\"k\">mode</span>: <span class=\"s\">dry-run</span>   <span class=\"c\"># alert-only by default; switch to enforce to block</span>\n<span class=\"k\">content</span>:\n  <span class=\"k\">scanners</span>: [<span class=\"s\">secrets</span>, <span class=\"s\">pii</span>, <span class=\"s\">code_leak</span>]\n  <span class=\"k\">rules</span>:\n    - { <span class=\"k\">id</span>: <span class=\"s\">secret-leak</span>, <span class=\"k\">scanner</span>: <span class=\"s\">secrets</span>, <span class=\"k\">action</span>: <span class=\"s\">block</span> }",
+  "btn.copy": "Copy", "btn.copy2": "Copy", "btn.copied": "Copied",
+  "mq.eyebrow": "Sample audit events", "mq.h2": "See what the sentinel catches",
+  "mq.p": "Event stream taken from the project's E2E test scenarios (tests/e2e) — not real traffic",
+  "faq.eyebrow": "FAQ", "faq.h2": "Questions? Answered.",
+  "faq.q1": "Is EgressSentinel free? Where does my data go?",
+  "faq.a1": "Open source under MIT, completely free. It runs locally: the event store and evidence stay in the local <code>data/</code> directory with configurable retention (<code>aaa trim</code>) — no telemetry, no cloud components.",
+  "faq.q2": "Why isn't a certain AI agent's traffic captured?",
+  "faq.a2": "Node.js tools (Claude Code, Cursor CLI, …) ignore the system proxy and the Windows cert store by default. Run <code>aaa setup env</code> (injects <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code>) and <b>restart the agent process</b>; for Python it's <code>REQUESTS_CA_BUNDLE</code>. For full coverage use the admin-only local mode (transparent WinDivert capture).",
+  "faq.q3": "Will it slow down my network?",
+  "faq.a3": "regular mode is a loopback proxy with no cloud round-trip; content scanning reads only the first 256KB of each request by default, so large uploads aren't fully scanned; non-audited domains skip body scanning.",
+  "faq.q4": "My antivirus flagged it — why?",
+  "faq.a4": "A local proxy plus an installed root certificate maps to MITRE ATT&amp;CK T1553.004 — expected behavior that EDR products may detect. regular mode loads no drivers; the tool never hides itself and offers a complete uninstall. Make sure you installed it yourself on purpose.",
+  "faq.q5": "What does CERTIFICATE_VERIFY_FAILED mean?",
+  "faq.a5": "The target process doesn't trust this tool's CA yet — the runtime's certificate env var wasn't deployed, or the process wasn't restarted. See the previous answer. A few pinning-enabled programs will keep failing; whitelist them to degrade to metadata-only auditing.",
+  "faq.q6": "How do I uninstall completely?",
+  "faq.a6": "One command: <code>aaa teardown</code>. It restores everything in reverse journal order — removes the CA (matched by exact serial), restores proxy settings, cleans all env vars; even after a crash a rerun completes the restore. Idempotent: repeat runs are no-ops.",
+  "faq.q7": "Does it support Linux / macOS?",
+  "faq.a7": "v0.1.0 ships single-file executables for five platforms (Linux amd64/arm64, macOS amd64/arm64, Windows amd64). Windows is the first-class platform (full attribution and setup); on Linux/macOS process attribution requires a privileged session — details in <code>docs/notes/decisions.md</code> in the repo.",
+  "foot.slogan": "Local egress-traffic audit for AI agents and any application. Standing guard at your machine's network exit — no violation gets through.",
+  "foot.h1": "Product", "foot.dl": "Download", "foot.h2": "Resources",
+  "foot.doc1": "Research report", "foot.doc2": "Technical design", "foot.doc3": "Decision log",
+  "foot.h3": "Community", "foot.issue": "Issues", "foot.changelog": "Changelog",
+  "foot.copyright": "© 2026 EgressSentinel · MIT open source · authorized devices only · evidence never leaves your machine",
+  "foot.verified": "Page content verified against the repository (CLI commands / rule count / platform builds)"
+};
+(function(){
+  var els=[].slice.call(document.querySelectorAll("[data-i18n]"));
+  var ZH={}; els.forEach(function(el){ ZH[el.getAttribute("data-i18n")]=el.innerHTML; });
+  var ZH_TITLE=document.title;
+  var btn=document.getElementById("langToggle");
+  function setLang(l){
+    document.documentElement.lang = l==="en" ? "en" : "zh-CN";
+    document.title = l==="en" ? I18N_EN["title"] : ZH_TITLE;
+    els.forEach(function(el){
+      var k=el.getAttribute("data-i18n");
+      el.innerHTML = (l==="en" && I18N_EN[k]!=null) ? I18N_EN[k] : ZH[k];
+    });
+    btn.textContent = l==="en" ? "中" : "EN";
+    try{localStorage.setItem("lang",l);}catch(e){}
+  }
+  var saved="zh"; try{saved=localStorage.getItem("lang")||"zh";}catch(e){}
+  if(saved!=="zh") setLang(saved);
+  btn.addEventListener("click",function(){
+    setLang(document.documentElement.lang==="en"?"zh":"en");
+  });
+})();
+
+/* ============ 标签页切换 ============ */
 document.querySelectorAll(".tab").forEach(function(t){
   t.addEventListener("click",function(){
     document.querySelectorAll(".tab").forEach(function(x){x.classList.remove("on")});
@@ -603,15 +828,17 @@ document.querySelectorAll(".tab").forEach(function(t){
     document.getElementById(t.dataset.tab).classList.add("on");
   });
 });
-// 复制按钮
+/* ============ 复制按钮 ============ */
 document.querySelectorAll(".copy").forEach(function(b){
   b.addEventListener("click",function(){
     navigator.clipboard.writeText(b.dataset.copy.replace(/\\n/g,"\n")).then(function(){
-      b.textContent="已复制";setTimeout(function(){b.textContent="复制"},1600);
+      var lang=document.documentElement.lang;
+      b.textContent = lang==="en" ? "Copied" : "已复制";
+      setTimeout(function(){ b.textContent = lang==="en" ? "Copy" : "复制"; },1600);
     });
   });
 });
-// 事件流无缝滚动：复制一份内容
+/* ============ 事件流无缝滚动：复制一份内容 ============ */
 var marq=document.getElementById("marq");
 if(marq){marq.innerHTML+=marq.innerHTML;}
 </script>
