@@ -62,6 +62,8 @@ jobs:
       - name: Generate release notes from CHANGELOG
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
         run: python scripts/release_notes.py "${GITHUB_REF_NAME}" > release-notes.md
       - name: Upload to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')

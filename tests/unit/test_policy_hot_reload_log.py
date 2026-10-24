@@ -32,22 +32,27 @@ def test_policy_change_logs_hot_reload(
     loader.load()
     pipeline = AuditPipeline(loader)
 
-    clock = {"t": 1000.0}
+    clock = {"t": 1000.0, "mtime": 111.0}
 
     class FakeTime:
         @staticmethod
         def monotonic() -> float:
             return clock["t"]
 
-    monkeypatch.setattr(loader_mod, "time", FakeTime)  # 跳过 2s 限频：直接推进时间
+    # 去 FS 依赖：时间与 mtime 都由测试注入（CI 磁盘时间戳粒度可能粗于写入间隔）
+    monkeypatch.setattr(loader_mod, "time", FakeTime)
+    monkeypatch.setattr(
+        loader_mod.PolicyLoader, "_current_mtime", lambda self: clock["mtime"]
+    )
 
     with caplog.at_level(logging.INFO, logger="aaa.engine.pipeline"):
         _ = pipeline.policy  # 初次：建立基线版本，不告警
         assert "热更新" not in caplog.text
 
         clock["t"] += 5  # 越过 RELOAD_POLL_SECONDS
+        clock["mtime"] += 1.0  # mtime 必然变化
         _write(policy_file, "\n# touched\n")
-        _ = pipeline.policy  # mtime 变化 → 重读 → 版本变化 → 日志
+        _ = pipeline.policy  # mtime 变化 → 重读 → 日志
 
     assert "热更新" in caplog.text
     hits = [r for r in caplog.records if "热更新" in r.getMessage()]

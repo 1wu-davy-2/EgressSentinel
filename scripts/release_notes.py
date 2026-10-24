@@ -37,6 +37,10 @@ def extract_section(text: str, version: str) -> str | None:
 
 
 def main(argv: list[str]) -> int:
+    # Windows runner 的重定向 stdout 可能是 cp1252，中文会 UnicodeEncodeError
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     tag = argv[1] if len(argv) > 1 else ""
     if not tag:
         print(_FALLBACK)
