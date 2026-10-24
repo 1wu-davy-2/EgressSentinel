@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0b0217">
+<title>EgressSentinel · Vibe Coding 参赛作品</title>
+<meta name="description" content="Vibe Coding 大赛参赛作品：一句话需求，一支 AI 开发团队，一天之内从 0 到 v0.2.0 的本机 AI Agent 出口流量审计哨兵。">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0b0217;--ink:#f4f0ff;--dim:#9d94c9;
+  --p1:#a855f7;--p2:#ec4899;--p3:#22d3ee;--em:#34d399;--am:#fbbf24;--rd:#f87171;
+  --glass:rgba(255,255,255,.05);--line:rgba(255,255,255,.13);
+}
+html,body{height:100%;overflow:hidden}
+body{background:var(--bg);color:var(--ink);
+  font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+.mono{font-family:"Cascadia Code",Consolas,"JetBrains Mono",monospace}
+
+/* 背景特效 */
+#fx{position:fixed;inset:0;z-index:0;pointer-events:none}
+#fx .grid{position:absolute;inset:-50%;background:
+  linear-gradient(rgba(168,85,247,.07) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(168,85,247,.07) 1px,transparent 1px);
+  background-size:60px 60px;transform:perspective(600px) rotateX(60deg) translateY(10%);
+  animation:flow 14s linear infinite}
+@keyframes flow{to{background-position:0 60px,60px 0}}
+#fx .orb{position:absolute;border-radius:50%;filter:blur(90px);opacity:.5;animation:drift 16s ease-in-out infinite alternate}
+#fx .o1{width:520px;height:520px;background:#7c3aed;top:-15%;left:-10%}
+#fx .o2{width:460px;height:460px;background:#db2777;bottom:-18%;right:-8%;animation-delay:-6s}
+#fx .o3{width:300px;height:300px;background:#0891b2;top:40%;left:55%;opacity:.35;animation-delay:-11s}
+@keyframes drift{to{transform:translate(70px,-50px) scale(1.12)}}
+#fx .scan{position:absolute;inset:0;background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.14) 3px 4px);mix-blend-mode:overlay}
+
+/* 舞台与场景 */
+#stage{position:relative;z-index:2;height:100%;display:grid;place-items:center;padding:4vh 5vw}
+.scene{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;
+  text-align:center;padding:9vh 6vw 16vh;opacity:0;transform:translateY(24px) scale(.985);
+  transition:opacity .7s ease,transform .7s ease;pointer-events:none}
+.scene.on{opacity:1;transform:none;pointer-events:auto}
+
+/* 顶部进度 */
+#bar{position:fixed;top:0;left:0;right:0;height:4px;z-index:9;background:rgba(255,255,255,.07)}
+#bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--p1),var(--p2),var(--p3));transition:width .12s linear}
+#dots{position:fixed;top:14px;left:50%;transform:translateX(-50%);display:flex;gap:9px;z-index:9}
+#dots i{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.18);cursor:pointer;transition:.25s}
+#dots i.on{background:var(--p3);box-shadow:0 0 12px var(--p3);transform:scale(1.25)}
+#hint{position:fixed;bottom:14px;width:100%;text-align:center;color:var(--dim);font-size:.78rem;z-index:9;letter-spacing:1px}
+
+/* 控制按钮 */
+.ctrl{position:fixed;z-index:9;border:1px solid var(--line);background:var(--glass);color:var(--ink);
+  border-radius:10px;padding:7px 14px;font-size:.82rem;cursor:pointer;backdrop-filter:blur(8px);transition:.2s}
+.ctrl:hover{border-color:var(--p3);color:var(--p3)}
+#nav{bottom:14px;right:16px;display:flex;gap:8px}
+#mute{bottom:14px;left:16px}
+#replay{bottom:60px;right:16px;display:none}
+
+/* 文本体系 */
+.eyebrow{font-size:.85rem;letter-spacing:.45em;color:var(--p3);text-transform:uppercase;margin-bottom:2.2vh;
+  text-shadow:0 0 18px rgba(34,211,238,.8)}
+h1{font-size:clamp(2.6rem,8.5vw,6.4rem);font-weight:900;line-height:1.06;letter-spacing:-.02em}
+h1 .g{background:linear-gradient(100deg,var(--p1),var(--p2) 55%,var(--p3));-webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 0 26px rgba(236,72,153,.45))}
+h2{font-size:clamp(1.7rem,4.6vw,3.2rem);font-weight:800;line-height:1.2}
+.sub{color:var(--dim);font-size:clamp(.95rem,1.6vw,1.18rem);max-width:760px;margin-top:2.4vh;line-height:1.9}
+.sub b{color:var(--ink)}
+
+/* 计数器 */
+.stats{display:flex;gap:4vw;flex-wrap:wrap;justify-content:center;margin-top:4.5vh}
+.stat .n{font-size:clamp(2rem,5vw,3.6rem);font-weight:900;background:linear-gradient(120deg,var(--em),var(--p3));-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat .l{color:var(--dim);font-size:.85rem;margin-top:2px}
+
+/* 终端 */
+.term{width:min(860px,92vw);border-radius:16px;border:1px solid var(--line);background:#0d0820;
+  box-shadow:0 30px 90px rgba(0,0,0,.6),0 0 60px rgba(124,58,237,.18);text-align:left;overflow:hidden}
+.term .t{display:flex;gap:8px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.04)}
+.term .t i{width:11px;height:11px;border-radius:50%}
+.term .t span{margin-left:8px;color:var(--dim);font-size:.75rem}
+.term pre{padding:18px 22px;font-size:clamp(.7rem,1.35vw,.86rem);line-height:1.95;min-height:12em;white-space:pre-wrap;word-break:break-all}
+.c-cmd{color:#fff}.c-cmd::before{content:"❯ ";color:var(--em)}
+.c-dim{color:#6f68a0}.c-g{color:var(--em)}.c-r{color:var(--rd)}.c-y{color:var(--am)}.c-b{color:#7aa2f7}.c-p{color:var(--p2)}
+.cursor{display:inline-block;width:9px;height:1em;background:var(--em);vertical-align:-2px;animation:bl 1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+
+/* Agent 流水卡 */
+.agents{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin-top:4vh}
+.ag{border:1px solid var(--line);background:var(--glass);border-radius:14px;padding:14px 20px;font-size:.86rem;
+  opacity:.15;transform:translateY(14px);transition:.55s}
+.ag b{display:block;font-size:.95rem;margin-bottom:3px}
+.ag.ok{opacity:1;transform:none;border-color:rgba(52,211,153,.5);box-shadow:0 0 22px rgba(52,211,153,.15)}
+.ag.run{opacity:1;transform:none;border-color:rgba(34,211,238,.55)}
+
+/* 架构图 */
+.arch{display:grid;grid-template-columns:repeat(3,1fr);gap:1.4vw;align-items:center;width:min(980px,94vw);margin-top:4vh}
+.node{border:1px solid var(--line);background:var(--glass);border-radius:14px;padding:14px 12px;font-size:.84rem;color:var(--dim);
+  opacity:.2;transition:.5s}
+.node b{display:block;color:var(--ink);font-size:.95rem;margin-bottom:3px}
+.node.on{opacity:1;border-color:rgba(168,85,247,.6);box-shadow:0 0 24px rgba(168,85,247,.2)}
+.node.on.hot{border-color:rgba(34,211,238,.65);box-shadow:0 0 24px rgba(34,211,238,.22)}
+.arr{color:var(--dim);text-align:center;font-size:1.3rem;opacity:.25;transition:.5s}
+.arr.on{opacity:1;color:var(--p3)}
+@media(max-width:760px){.arch{grid-template-columns:1fr 1fr}}
+
+/* 指纹演示 */
+.fp{display:flex;gap:2.4vw;align-items:center;justify-content:center;margin-top:4vh;flex-wrap:wrap}
+.fp .box{border:1px solid var(--line);border-radius:14px;padding:16px 20px;background:var(--glass);text-align:left;min-width:230px}
+.fp .box h5{font-size:.8rem;color:var(--p3);letter-spacing:.2em;margin-bottom:8px}
+.fp .ln{font-size:.74rem;color:var(--dim);white-space:nowrap}
+.fp .ln.hit{color:var(--em);text-shadow:0 0 12px rgba(52,211,153,.6)}
+.fp .arrow{font-size:2rem;color:var(--p2);animation:pulse2 1.2s infinite}
+@keyframes pulse2{50%{transform:scale(1.18);opacity:.7}}
+
+/* CTA */
+.btns{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;margin-top:4.5vh}
+.btn{display:inline-block;padding:13px 30px;border-radius:999px;font-weight:700;font-size:.95rem;text-decoration:none;transition:.2s}
+.btn.p{background:linear-gradient(100deg,var(--p1),var(--p2));color:#fff;box-shadow:0 8px 30px rgba(219,39,119,.4)}
+.btn.p:hover{transform:translateY(-3px) scale(1.03)}
+.btn.o{border:1px solid var(--line);color:var(--ink);background:var(--glass)}
+.btn.o:hover{border-color:var(--p3);color:var(--p3)}
+
+/* 开场遮罩 */
+#gate{position:fixed;inset:0;z-index:20;display:grid;place-items:center;background:rgba(6,1,15,.86);backdrop-filter:blur(10px);cursor:pointer;transition:.5s}
+#gate.hide{opacity:0;pointer-events:none}
+#gate .in{text-align:center}
+#gate .play{width:92px;height:92px;border-radius:50%;border:2px solid var(--p2);display:grid;place-items:center;margin:0 auto 20px;
+  box-shadow:0 0 40px rgba(236,72,153,.5);animation:pulse2 1.6s infinite}
+#gate .play::after{content:"";border-left:26px solid var(--p2);border-top:16px solid transparent;border-bottom:16px solid transparent;margin-left:6px}
+#gate p{color:var(--dim);font-size:.9rem;letter-spacing:.18em}
+
+/* 演出驱动：入场元素级联 */
+.pop{opacity:0;transform:translateY(18px);transition:.6s ease}
+.scene.on .pop{opacity:1;transform:none}
+.scene.on .d1{transition-delay:.15s}.scene.on .d2{transition-delay:.45s}.scene.on .d3{transition-delay:.75s}
+.scene.on .d4{transition-delay:1.05s}.scene.on .d5{transition-delay:1.35s}.scene.on .d6{transition-delay:1.7s}
+</style>
+</head>
+<body>
+<div id="fx"><div class="grid"></div><div class="orb o1"></div><div class="orb o2"></div><div class="orb o3"></div><div class="scan"></div></div>
+<div id="bar"><i id="fill"></i></div>
+<div id="dots"></div>
+<button class="ctrl" id="mute">🔊 配乐</button>
+<div id="nav"><button class="ctrl" id="prev">←</button><button class="ctrl" id="next">→</button></div>
+<button class="ctrl" id="replay">↻ 重播</button>
+<div id="hint">点击 / 空格 播放下一幕 · ← → 切换 · 全程自动</div>
+
+<div id="stage">
+
+  <!-- 1 开场 -->
+  <section class="scene" id="s1">
+    <div class="eyebrow pop d1">VIBE CODING 大赛参赛作品</div>
+    <h1 class="pop d2">我把<span class="g">一句话</span>，<br>交给了一支 <span class="g">AI 开发团队</span></h1>
+    <p class="sub pop d3">一天之内，它们交付了一个真实的安全产品：<br><b>EgressSentinel 出口哨兵</b> —— 看住 AI Agent 网络出口的审计与阻断代理</p>
+    <div class="stats pop d4">
+      <div class="stat"><div class="n" data-count="4">0</div><div class="l">个版本迭代</div></div>
+      <div class="stat"><div class="n" data-count="300" data-suffix="+">0</div><div class="l">自动化测试</div></div>
+      <div class="stat"><div class="n" data-count="5">0</div><div class="l">平台可执行文件</div></div>
+      <div class="stat"><div class="n" data-count="1">0</div><div class="l">个人类成员（我）</div></div>
+    </div>
+  </section>
+
+  <!-- 2 痛点 -->
+  <section class="scene" id="s2">
+    <div class="eyebrow pop d1">为什么做这个</div>
+    <h2 class="pop d2">你的 AI Agent 能读你全部代码，<br><span style="color:var(--rd)">但没人看着它往外发什么。</span></h2>
+    <div class="term pop d3" style="margin-top:4vh">
+      <div class="t"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i><span class="mono">你的电脑 · 此刻</span></div>
+      <pre class="mono" id="leakTerm"></pre>
+    </div>
+    <p class="sub pop d4">Claude Code / Cursor / MCP 服务……HTTPS 加密之下，<b>代码、密钥、.env 是否被私自上传，完全不可见</b>。<br>LLM 网关要应用自愿接入，进程防火墙看不见内容，eBPF 上不了 Windows —— <b>没有现成答案</b>。</p>
+  </section>
+
+  <!-- 3 Vibe Coding 全过程 -->
+  <section class="scene" id="s3">
+    <div class="eyebrow pop d1">Vibe Coding 的全过程</div>
+    <h2 class="pop d2">一条需求 → <span class="g">AI 团队流水线</span></h2>
+    <div class="term pop d3" style="margin-top:3.4vh">
+      <div class="t"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i><span class="mono">我 → 主脑 GLM-5.3</span></div>
+      <pre class="mono" id="planTerm"></pre>
+    </div>
+    <div class="agents pop d4">
+      <div class="ag" data-step="0"><b>🔍 调研 ×3</b>并行扫 GitHub 选型</div>
+      <div class="ag" data-step="1"><b>📐 规划</b>架构+任务合同</div>
+      <div class="ag" data-step="2"><b>⚡ Flash 实现</b>GLM-5.3-Flash 写码</div>
+      <div class="ag" data-step="3"><b>🧪 测试门禁</b>pytest 不过不放行</div>
+      <div class="ag" data-step="4"><b>🚀 发布</b>六平台构建+官网</div>
+    </div>
+  </section>
+
+  <!-- 4 架构 -->
+  <section class="scene" id="s4">
+    <div class="eyebrow pop d1">产品架构（真的能跑）</div>
+    <h2 class="pop d2">双模式抓取 · 五维规则 · <span class="g">事中阻断</span></h2>
+    <div class="arch pop d3">
+      <div class="node" data-a="0"><b>🌐 任意进程</b>AI Agent / 应用</div>
+      <div class="arr" data-a="0">⇢</div>
+      <div class="node" data-a="1"><b>🛰️ 采集引擎</b>mitmproxy MITM 明文<br>regular / local(WinDivert)</div>
+      <div class="arr" data-a="1">⇢</div>
+      <div class="node hot" data-a="2"><b>⚖️ 五维规则</b>域名/进程/内容/体量/时间窗<br>进程归因 · 43 密钥规则</div>
+      <div class="arr" data-a="2">⇢</div>
+      <div class="node hot" data-a="3"><b>🚦 四级动作</b>allow/alert/confirm/block<br>403 事中拦截 + toast/webhook</div>
+      <div class="arr" data-a="3">⇢</div>
+      <div class="node" data-a="4"><b>📊 本地面板</b>脱敏详情 · 证据留痕<br>SQLite · 幂等 teardown</div>
+    </div>
+  </section>
+
+  <!-- 5 拦截瞬间 -->
+  <section class="scene" id="s5">
+    <div class="eyebrow pop d1">Demo · 拦截瞬间</div>
+    <h2 class="pop d2">密钥出站的<span style="color:var(--rd)">那 0.1 秒</span></h2>
+    <div class="term pop d3" style="margin-top:3.4vh">
+      <div class="t"><i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i><span class="mono">aaa run — enforce 模式</span></div>
+      <pre class="mono" id="blockTerm"></pre>
+    </div>
+  </section>
+
+  <!-- 6 护城河：仓库指纹 -->
+  <section class="scene" id="s6">
+    <div class="eyebrow pop d1">独家护城河 · 竞品都没有</div>
+    <h2 class="pop d2"><span class="g">仓库指纹</span>：精确到「哪一段代码被外发」</h2>
+    <p class="sub pop d3">预扫描你的 git 仓库生成 n-gram 指纹索引，请求体逐片比对——不再靠体量猜，<b>误报大降，命中即定位到文件与行号</b>。</p>
+    <div class="fp pop d4">
+      <div class="box"><h5>📦 本地仓库索引</h5>
+        <div class="ln mono">src/auth.py:41  █████ 3f2a…</div>
+        <div class="ln mono">src/pay.go:88   █████ 91cc…</div>
+        <div class="ln mono">src/secrets.py:12 ████ 77e0…</div>
+      </div>
+      <div class="arrow">➜</div>
+      <div class="box"><h5>🛰️ 拦截的请求体（切片比对）</h5>
+        <div class="ln mono">…token = "AKIA****"…</div>
+        <div class="ln hit mono">✓ def sign_request(key, secret): ← 命中 src/auth.py:41</div>
+        <div class="ln hit mono">✓ const PAY_ENDPOINT = … ← 命中 src/pay.go:88</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 收尾 -->
+  <section class="scene" id="s7">
+    <div class="eyebrow pop d1">成果</div>
+    <h2 class="pop d2">1 个人 + AI 团队<br>= <span class="g">0 → v0.2.0</span> 的开源安全产品</h2>
+    <p class="sub pop d3">调研报告 · 技术设计 · 300+ 测试 · CI 六平台 · 中英官网 · 常驻自愈 · 通知渠道 · 仓库指纹<br>——全部由 <b>GLM-5.3 出脑、GLM-5.3-Flash 出手</b>，人类只写需求与验收。</p>
+    <div class="btns pop d4">
+      <a class="btn p" href="https://github.com/1wu-davy-2/EgressSentinel/releases" target="_blank" rel="noopener">⬇ 下载五平台可执行</a>
+      <a class="btn o" href="https://github.com/1wu-davy-2/EgressSentinel" target="_blank" rel="noopener">GitHub 源码</a>
+      <a class="btn o" href="https://1wu-davy-2.github.io/EgressSentinel/" target="_blank" rel="noopener">项目官网</a>
+    </div>
+    <p class="sub pop d5" style="margin-top:3.5vh;font-size:.85rem;color:var(--dim)">MIT 开源 · 证据不离开本机 · 仅用于授权设备</p>
+  </section>
+</div>
+
+<div id="gate"><div class="in"><div class="play"></div><p>点 击 开 演（含合成配乐，可随时静音）</p></div></div>
+
+<script>
+/* ============ 场景调度 ============ */
+const SCENES=[...document.querySelectorAll(".scene")];
+const DOTS=document.getElementById("dots"),FILL=document.getElementById("fill");
+const DUR=[8000,11000,13000,10000,9000,9000,9000]; // 每幕毫秒
+let cur=-1,timer=null,prog=0,playing=false;
+
+SCENES.forEach((_,i)=>{const d=document.createElement("i");d.onclick=()=>go(i);DOTS.appendChild(d)});
+
+function show(i){
+  SCENES.forEach((s,k)=>s.classList.toggle("on",k===i));
+  [...DOTS.children].forEach((d,k)=>d.classList.toggle("on",k===i));
+  cur=i;prog=0;
+  stopSceneFx();
+  if(i===1)typeLeak();
+  if(i===2){typePlan();runAgents();}
+  if(i===3)runArch();
+  if(i===4)typeBlock();
+  if(i===0)countUp();
+}
+function go(i){if(i<0||i>=SCENES.length)return;show(i);restartBar()}
+function next(){go(cur+1<SCENES.length?cur+1:0)}
+function restartBar(){clearInterval(timer);playing=true;
+  timer=setInterval(()=>{prog+=100/DUR[cur]*5;FILL.style.width=Math.min(prog,100)+"%";
+    if(prog>=100)next()},50)}
+function begin(){document.getElementById("gate").classList.add("hide");go(0);audioOn()}
+
+document.getElementById("gate").onclick=begin;
+document.getElementById("next").onclick=next;
+document.getElementById("prev").onclick=()=>go(cur-1);
+document.getElementById("replay").onclick=()=>{document.getElementById("replay").style.display="none";go(0)};
+addEventListener("keydown",e=>{
+  if(e.code==="Space"){e.preventDefault();if(cur<0)begin();else next()}
+  if(e.code==="ArrowRight")next();
+  if(e.code==="ArrowLeft")go(cur-1);
+});
+
+/* ============ 打字机 ============ */
+function typer(el,lines,speed=26){let li=0,ci=0,out="";el.innerHTML="";
+  el._t=setInterval(()=>{
+    if(li>=lines.length){el.innerHTML=out;clearInterval(el._t);return}
+    const L=lines[li],cls=L.c||"c-dim";
+    el.innerHTML=out+'<span class="'+cls+'">'+L.t.slice(0,++ci)+"</span>"+'<span class="cursor"></span>';
+    if(ci>=L.t.length){out+='<span class="'+cls+'">'+L.t+"</span>\n";li++;ci=0}},speed)}
+const C=(t,c)=>({t,c:c});
+function stopSceneFx(){["leakTerm","planTerm","blockTerm"].forEach(id=>{const e=document.getElementById(id);if(e&&e._t)clearInterval(e._t)})}
+
+function typeLeak(){typer(document.getElementById("leakTerm"),[
+  C("node.exe (claude)  → api.anthropic.com   ✓ 合规对话","c-dim"),
+  C("node.exe (claude)  → uploads.example.com ⚠ 512KB 代码体…","c-y"),
+  C("node.exe (claude)  → api.example.com     ✗ AKIA**** 外发中…","c-r"),
+  C("── 你看见了吗？HTTPS 之下，一切都是黑盒 ──","c-dim")],34)}
+
+function typePlan(){typer(document.getElementById("planTerm"),[
+  C("「做一个本机 AI Agent 流量审计工具：MITM 还原明文、归因进程、","c-cmd"),
+  C("   违规外发事中阻断。调研+计划你做，代码交给 Flash，允许 subagents。」","c-cmd"),
+  C("[调研×3 并行] mitmproxy(MIT) · eBPF✗Windows · 竞品空白确认","c-b"),
+  C("[计划] docs/02 技术设计 · docs/03 任务合同（P0→P6 验收线）","c-b"),
+  C("[工作流] Flash 实现 → pytest 门禁 → 独立验收 → 打 tag 发布","c-g")],22)}
+
+function typeBlock(){typer(document.getElementById("blockTerm"),[
+  C("aaa run --policy enforce","c-cmd"),
+  C("[engine] regular 127.0.0.1:8080 · 归因器就绪 · 指纹索引 12,801 片","c-dim"),
+  C("POST api.example.com/v1/chat  body=4.2KB  proc=node.exe#41233","c-b"),
+  C("  ⚡ secret-leak 命中 AKIA••••（gitleaks#aws-access-token）","c-y"),
+  C("  ⚡ fingerprint 命中 src/auth.py:41","c-y"),
+  C("  → BLOCK 403 · 目标服务器未收到 · 证据 sha256 已留痕 · toast 已弹","c-r")],24)}
+
+/* ============ Agent 流水灯 ============ */
+function runAgents(){const ags=[...document.querySelectorAll(".ag")];ags.forEach(a=>a.classList.remove("ok","run"));
+  ags.forEach((a,i)=>setTimeout(()=>{a.classList.add("run");
+    setTimeout(()=>{a.classList.remove("run");a.classList.add("ok")},900)},350+i*1150))}
+
+/* ============ 架构点亮 ============ */
+function runArch(){const N=[...document.querySelectorAll(".node")],A=[...document.querySelectorAll(".arr")];
+  N.forEach(n=>n.classList.remove("on"));A.forEach(a=>a.classList.remove("on"));
+  const order=[0,0,1,1,2,2,3,3,4];order.forEach((idx,i)=>setTimeout(()=>{
+    if(N[idx])N[idx].classList.add("on");if(i>0){const prev=A.filter(a=>+a.dataset.a===order[i-1])[0];if(prev)prev.classList.add("on")}},300+i*520))}
+
+/* ============ 数字滚动 ============ */
+function countUp(){document.querySelectorAll(".scene.on .stat .n").forEach(el=>{
+  const target=+el.dataset.count,suf=el.dataset.suffix||"";let v=0;
+  if(el._t)clearInterval(el._t);
+  el._t=setInterval(()=>{v+=Math.max(1,Math.round(target/24));if(v>=target){v=target;clearInterval(el._t)}el.textContent=v+suf},46)})}
+
+/* ============ WebAudio 合成配乐（纯代码，零素材） ============ */
+let AC=null,muted=false,master=null,loopTimer=null;
+function audioOn(){if(AC)return;try{AC=new (window.AudioContext||window.webkitAudioContext)();
+  master=AC.createGain();master.gain.value=muted?0:.14;master.connect(AC.destination);
+  const bass=[110,110,130.8,98];const arp=[220,261.6,329.6,261.6,220,329.6,392,329.6];let step=0;
+  function beat(t){ // kick
+    const k=AC.createOscillator(),g=AC.createGain();k.frequency.setValueAtTime(150,t);
+    k.frequency.exponentialRampToValueAtTime(45,t+.12);g.gain.setValueAtTime(.9,t);
+    g.gain.exponentialRampToValueAtTime(.01,t+.16);k.connect(g);g.connect(master);k.start(t);k.stop(t+.2);
+    // bass
+    const b=AC.createOscillator(),bg=AC.createGain();b.type="sawtooth";
+    b.frequency.value=bass[Math.floor(step/4)%4]/2;bg.gain.setValueAtTime(.16,t);
+    bg.gain.exponentialRampToValueAtTime(.02,t+.4);b.connect(bg);bg.connect(master);b.start(t);b.stop(t+.45);
+    // arp
+    const a=AC.createOscillator(),ag=AC.createGain();a.type="triangle";
+    a.frequency.value=arp[step%8]*2;ag.gain.setValueAtTime(.05,t);
+    ag.gain.exponentialRampToValueAtTime(.008,t+.22);a.connect(ag);ag.connect(master);a.start(t);a.stop(t+.25);
+    step++}
+  let next=AC.currentTime+.1;
+  loopTimer=setInterval(()=>{while(next<AC.currentTime+.6){beat(next);next+=.24}},120);
+}catch(e){/* 无声兜底 */}}
+document.getElementById("mute").onclick=function(){muted=!muted;
+  if(master)master.gain.value=muted?0:.14;this.textContent=muted?"🔇 静音":"🔊 配乐"};
+
+/* 末幕显示重播 */
+const _next=next;next=function(){if(cur===SCENES.length-1)document.getElementById("replay").style.display="block";_next()};
+</script>
+</body>
+</html>
