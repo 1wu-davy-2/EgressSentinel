@@ -353,6 +353,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
       <a href="#ui" data-i18n="nav.ui">操作界面</a>
       <a href="#quickstart" data-i18n="nav.quickstart">快速开始</a>
       <a href="#faq" data-i18n="nav.faq">常见问题</a>
+      <a href="#roadmap" data-i18n="nav.roadmap">路线图</a>
     </div>
     <div class="nav-cta">
       <button class="iconbtn" id="themeToggle" aria-label="切换主题">🌙</button>
@@ -399,7 +400,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
 <!-- ============ 2 · 统计带 ============ -->
 <div class="stats">
   <div class="stats-inner">
-    <div class="stat"><div class="n grad-text">290+</div><div class="l" data-i18n="stat.t1">自动化测试全绿</div></div>
+    <div class="stat"><div class="n grad-text">585+</div><div class="l" data-i18n="stat.t1">自动化测试全绿</div></div>
     <div class="stat"><div class="n grad-text">43</div><div class="l" data-i18n="stat.t2">密钥检测规则（gitleaks 移植）</div></div>
     <div class="stat"><div class="n grad-text">5</div><div class="l" data-i18n="stat.t3">发布平台（Linux/macOS/Windows × amd64/arm64）</div></div>
     <div class="stat"><div class="n grad-text">MIT</div><div class="l" data-i18n="stat.t4">开源协议 · 证据不出本机</div></div>
@@ -442,6 +443,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
       <div class="card"><div class="ic">↩️</div><h3 data-i18n="feat.c6t">完整可逆，本地留痕</h3><p data-i18n="feat.c6p">所有系统改动 journal-first 记录，<code>aaa teardown</code> 幂等还原（崩溃后仍完整还原）；证据仅存本机 SQLite，保留期可配。</p></div>
       <div class="card"><div class="ic">🚀</div><h3 data-i18n="feat.c7t">安装即守护，全量监控</h3><p data-i18n="feat.c7p">setup 完成即默认后台启动：五维规则与密钥/PII/代码三大扫描器开箱全开，开机自启——无需手动配置、无需重启。</p></div>
       <div class="card"><div class="ic">🤖</div><h3 data-i18n="feat.c8t">常驻与自愈，杜绝断网</h3><p data-i18n="feat.c8p">关机/注销 4 秒优雅收尾不阻塞系统；开机自启拉起代理；watchdog 检测「代理已启用但进程没跑」自动还原网络——没有 VPN 式开机断网问题。</p></div>
+      <div class="card" style="border-color:rgba(168,85,247,.4)"><div class="ic">🧬</div><h3 data-i18n="feat.c9t">仓库指纹检测（独家）</h3><p data-i18n="feat.c9p">预扫描你的 git 仓库生成 n-gram 指纹索引，请求体逐片比对——命中精确到<b>哪个文件哪一行</b>被外发，误报大降；另有 LLM 辅助判定、响应侧注入检测与证据 AES-256-GCM 加密（v0.2.0，默认关闭按需开启）。</p></div>
     </div>
   </div>
 </section>
@@ -648,6 +650,35 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
   </div>
 </section>
 
+<!-- ============ 9.5 · 路线图状态板 ============ -->
+<section id="roadmap" style="background:var(--bg3);border-block:1px solid var(--border)">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow" data-i18n="rm.eyebrow">路线图</span>
+      <h2 data-i18n="rm.h2">洞察清单进度</h2>
+      <p data-i18n="rm.p">按「GLM-5.3 出计划、GLM-5.3-Flash 并行实现」的节奏推进</p>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;max-width:840px;margin:0 auto">
+      <div class="card" style="display:flex;gap:16px;align-items:center;text-align:left;flex-wrap:wrap">
+        <span class="tag allow" style="font-size:.78rem">✅ v0.1.3</span>
+        <div style="flex:1;min-width:280px"><b data-i18n="rm.1t">① 告警通知</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.1p">toast / 企业微信·钉钉·飞书·Slack·Discord webhook / 邮件；限流聚合；配置随策略热更新</div></div>
+      </div>
+      <div class="card" style="display:flex;gap:16px;align-items:center;text-align:left;flex-wrap:wrap">
+        <span class="tag allow" style="font-size:.78rem">✅ v0.2.0</span>
+        <div style="flex:1;min-width:280px"><b data-i18n="rm.2t">② 安全深化</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.2p">仓库指纹 / 防火墙加固 / LLM 辅助判定 / 响应侧注入检测 / 证据加密</div></div>
+      </div>
+      <div class="card" style="display:flex;gap:16px;align-items:center;text-align:left;flex-wrap:wrap">
+        <span class="tag confirm" style="font-size:.78rem">🚧 v0.3.0</span>
+        <div style="flex:1;min-width:280px"><b data-i18n="rm.3t">③ 工程与体验（进行中）</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.3p">服务化+安装器+托盘 / 性能优化 / 多策略 profile / CLI 中英双语</div></div>
+      </div>
+      <div class="card" style="display:flex;gap:16px;align-items:center;text-align:left;flex-wrap:wrap">
+        <span class="tag confirm" style="font-size:.78rem">🚧 v0.3.0</span>
+        <div style="flex:1;min-width:280px"><b data-i18n="rm.4t">④ 数据与生态（进行中）</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.4p">日报周报（邮件投递）/ 规则导入导出+gitleaks 同步 / 多机中心化聚合</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ============ 10 · CTA ============ -->
 <section>
   <div class="wrap">
@@ -736,7 +767,16 @@ var I18N_EN = {
   "hero.h1b": "sending your code?",
   "hero.sub": "<b>EgressSentinel</b> is a local audit proxy for AI agents: it decrypts the HTTPS traffic of <b>any process</b>, attributes every request to its <b>source process</b>, and <b>blocks in-flight</b> secret and code exfiltration with a five-dimension ruleset — fully logged locally, no opt-in from apps required.",
   "cta.download": "⬇ Free Download", "cta.docs": "Documentation",
-  "cta.badge": "v0.1.0 · executables for 5 platforms",
+  "cta.badge": "v0.2.0 · executables for 5 platforms",
+  "nav.roadmap": "Roadmap",
+  "feat.c9t": "Repo-fingerprint leak detection (exclusive)",
+  "feat.c9p": "Pre-scan your git repos into an n-gram fingerprint index and match request bodies chunk-by-chunk — pinpoint exactly <b>which file and line</b> is being exfiltrated. Plus LLM judging, response-side injection detection and AES-256-GCM evidence encryption (v0.2.0, off by default).",
+  "rm.eyebrow": "Roadmap", "rm.h2": "Insight-list progress",
+  "rm.p": "Shipped as \"GLM-5.3 plans, GLM-5.3-Flash implements in parallel\"",
+  "rm.1t": "① Alert notifications", "rm.1p": "toast / wecom·dingtalk·feishu·slack·discord webhooks / email; rate-limited digests; hot-reloaded config",
+  "rm.2t": "② Security deepening", "rm.2p": "repo fingerprint / firewall harden / LLM judge / response-side injection detection / evidence encryption",
+  "rm.3t": "③ Engineering & experience (in progress)", "rm.3p": "service + installer + tray / performance / policy profiles / bilingual CLI",
+  "rm.4t": "④ Data & ecosystem (in progress)", "rm.4p": "daily & weekly reports / rule import-export + gitleaks sync / multi-machine aggregation",
   "cta.h2a": "Ready to see your ", "cta.h2b": "egress traffic", "cta.h2c": "?",
   "cta.p": "Download EgressSentinel and start auditing your AI agents in five minutes",
   "cta.dl2": "⬇ Download Now",
