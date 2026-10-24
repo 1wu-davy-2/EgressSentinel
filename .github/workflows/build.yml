@@ -23,7 +23,7 @@ jobs:
           - { runs-on: windows-11-arm, os: windows, arch: arm64, experimental: true }
           - { runs-on: ubuntu-latest, os: linux, arch: amd64, experimental: true }
           - { runs-on: ubuntu-24.04-arm, os: linux, arch: arm64, experimental: true }
-          - { runs-on: macos-13, os: macos, arch: amd64, experimental: true }
+          - { runs-on: macos-15-intel, os: macos, arch: amd64, experimental: true }
           - { runs-on: macos-latest, os: macos, arch: arm64, experimental: true }
     steps:
       - uses: actions/checkout@v4

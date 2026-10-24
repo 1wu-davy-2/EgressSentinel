@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import pkgutil
 import subprocess
 import sys
@@ -104,14 +105,18 @@ def collect_hiddenimports() -> list[str]:
 
 
 def collect_datas() -> list[str]:
-    """随包数据文件：出厂默认策略 + Web 面板静态页（``--add-data src;dst`` 形态）。"""
+    """随包数据文件：出厂默认策略 + Web 面板静态页（``--add-data src<sep>dst`` 形态）。
+
+    分隔符必须是当前平台的 ``os.pathsep``：Windows 为 ``;``，Linux/macOS 为 ``:``。
+    """
+    sep = os.pathsep
     datas: list[str] = []
     policies = PROJECT_ROOT / "policies"
     if policies.is_dir():
-        datas.append(f"{policies};policies")
+        datas.append(f"{policies}{sep}policies")
     static = SRC_DIR / "aaa" / "web" / "static"
     if static.is_dir():
-        datas.append(f"{static};aaa/web/static")
+        datas.append(f"{static}{sep}aaa/web/static")
     return datas
 
 
@@ -156,7 +161,8 @@ def main() -> int:
     print("PyInstaller 命令：")
     print("  " + " ".join(args))
     completed = subprocess.run(args, cwd=str(PROJECT_ROOT))
-    exe = DIST_DIR / f"{APP_NAME}.exe"
+    # 非 Windows 平台 PyInstaller 产物无 .exe 后缀
+    exe = DIST_DIR / (APP_NAME + (".exe" if os.name == "nt" else ""))
     if completed.returncode != 0 or not exe.exists():
         print(f"打包失败（exit={completed.returncode}），未生成 {exe}", file=sys.stderr)
         return 1
