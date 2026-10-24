@@ -122,6 +122,41 @@ aaa run 的策略默认 policies/default.yaml（mode: dry-run 出厂默认）
 
 `aaa status` 已内置自检预警与自启任务状态；`aaa teardown` 会连计划任务一并还原。
 
+## 告警通知（即时知道有人外发密钥）
+
+v0.1.3 起，命中 `alert` 及以上判定的事件会**即时推送通知**——不用打开面板也第一时间知道：
+默认通道是 Windows 系统通知（toast，本机、无外发），另支持 Webhook 与 SMTP 邮件。
+配置在策略 YAML 的 `notifications` 段，**随策略热更新**（保存约 2 秒生效）：
+
+```yaml
+notifications:
+  min_action: alert        # 通知门槛：alert | confirm | block
+  toast:
+    enabled: true          # Windows 系统通知（PowerShell WinRT，零依赖，出厂默认）
+  webhook:
+    enabled: false
+    provider: generic      # generic | wecom | dingtalk | feishu | slack | discord
+    url: ""                # 环境变量 AAA_WEBHOOK_URL 优先（token 不必写进文件）
+  email:
+    enabled: false
+    smtp_host: ""          # 端口 465/SMTP_SSL 或 587+starttls（use_tls: false）
+    username: ""
+    password: ""           # 环境变量 AAA_SMTP_PASSWORD 优先
+    to_addrs: []
+  rate_limit:
+    max_per_minute: 10     # 每通道滑动窗口；超出部分合并为一条 digest，绝不轰炸
+```
+
+要点：
+
+- **通知正文与面板同一脱敏核心**：命中的密钥一律先打码（如 `AKIA****YZ`）再进通知，
+  绝不把拦截到的明文密钥外发到 webhook/邮件；
+- Webhook 直连不走本机代理（`trust_env=False`），避免被本工具自己拦截形成回环；
+- 通道发送失败只记日志、绝不影响审计代理本身；退出时有界排空（flush 2s）；
+- 老策略文件没有 `notifications` 段 = 通知全关（升级零惊扰）；
+- 测试通道：`aaa notify test`（按配置发一条测试通知）或 `aaa notify test --channel webhook`；
+  当前配置看 `aaa status` 的「通知」行。
+
 ## 卸载
 
 ```text
@@ -147,6 +182,13 @@ aaa teardown              # 按改动日志逆序幂等还原：删除 CA（按�
 2. 发布新版本：`git tag v0.1.0 && git push --tags`，Release 页会自动出现六个平台的单文件产物。
 
 ## 常见问题
+
+- **怎么配置飞书 / 钉钉 / 企业微信机器人通知？** 三步：① 群里添加「自定义机器人」拿到
+  webhook 地址（飞书：`https://open.feishu.cn/open-apis/bot/v2/hook/xxx`；钉钉：自定义
+  webhook，安全设置建议选「自定义关键词」填 `EgressSentinel`；企业微信同 `wecom` 形态）；
+  ② 策略 YAML `notifications.webhook` 填 `enabled: true` + `provider: feishu|dingtalk|wecom`
+  （url 建议走环境变量 `AAA_WEBHOOK_URL`，不落盘）；③ `aaa notify test --channel webhook`
+  验证群里收到测试消息（策略保存约 2 秒热更新生效，无需重启）。
 
 - **突然关机后开机「断网」怎么办？** 系统代理仍指向 127.0.0.1:8080 而代理没跑。装了自启：开机自动起代理，起不来 watchdog 会在登录 30 秒后自动还原代理设置（网络自愈）。手动恢复一条命令：`aaa watchdog --fix`（或 `aaa teardown proxy`）。
 

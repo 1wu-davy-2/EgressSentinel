@@ -22,6 +22,8 @@ from mitmproxy import connection, http, tls
 from aaa.attribution.table import ProcessAttributor
 from aaa.engine.pipeline import AuditPipeline, EvaluationInput
 from aaa.engine.verdict import MatchedRule
+from aaa.notify.dispatcher import Dispatcher
+from aaa.policy.model import action_rank
 from aaa.store.db import EventSink
 from aaa.store.decisions import DECISION_DENY, DecisionStore, decision_key
 from aaa.store.events import (
@@ -91,6 +93,7 @@ class AuditAddon:
         pipeline: AuditPipeline | None = None,
         pinned_process: ProcessInfo | None = None,
         decisions: DecisionStore | None = None,
+        dispatcher: Dispatcher | None = None,
     ) -> None:
         self.events = events
         self.evidence = evidence
@@ -101,10 +104,14 @@ class AuditAddon:
         self.pinned_process = pinned_process
         #: confirm 决策缓存（T5.3：用户 deny 后同类请求升级 block，TTL 可配）
         self.decisions = decisions
+        #: 告警通知调度器（04 文档 §5：可选注入，None 时完全跳过——既有测试零改动兼容）
+        self.dispatcher = dispatcher
         #: client_connected 已见的连接数
         self.connections_seen = 0
         #: 归因未命中（unknown）的事件计数
         self.unknown_attribution_count = 0
+        #: 已入队通知的事件计数
+        self.notified_count = 0
         self._pending: dict[str, AuditEvent] = {}
         #: 连接对象 → 归因结果（client_connected 时点查，源端口时效性，02 文档 D2）
         self._conn_process: weakref.WeakKeyDictionary[connection.Client, ProcessInfo] = (
@@ -149,6 +156,7 @@ class AuditAddon:
                 event.matched_rules = [m.to_dict() for m in blocked]
                 event.action_taken = "blocked-connect"
                 self.events.append(event)
+                self._maybe_notify(event)
                 flow.response = make_block_response(blocked)
         except Exception:
             logger.exception("audit addon http_connect 钩子异常（fail-open）")
@@ -185,7 +193,7 @@ class AuditAddon:
             logger.exception("audit addon request 钩子异常（fail-open）")
 
     def response(self, flow: http.HTTPFlow) -> None:
-        """响应阶段：补全响应字段后 JSONL 直写。"""
+        """响应阶段：补全响应字段后落盘；达到通知门槛的事件入队（04 文档 §5）。"""
         try:
             event = self._pending.pop(flow.id, None) or self._build_request_event(flow)
             if flow.response is not None:
@@ -195,6 +203,7 @@ class AuditAddon:
                     content_type=flow.response.headers.get("content-type"),
                 )
             self.events.append(event)
+            self._maybe_notify(event)
         except Exception:
             logger.exception("audit addon response 钩子异常（fail-open）")
 
@@ -206,6 +215,7 @@ class AuditAddon:
                 event.error = str(flow.error)
             event.action_taken = "error"
             self.events.append(event)
+            self._maybe_notify(event)
         except Exception:
             logger.exception("audit addon error 钩子异常（fail-open）")
 
@@ -344,6 +354,35 @@ class AuditAddon:
     @property
     def pending_count(self) -> int:
         return len(self._pending)
+
+    def _maybe_notify(self, event: AuditEvent) -> None:
+        """达到通知门槛的事件入队（04 文档 §5：action ≥ min_action 才通知）。
+
+        dispatcher 为可选注入（None 跳过，既有测试零改动兼容）；min_action 读当前
+        策略（热更新即刻生效），无管线时回落 dispatcher 携带的配置。
+        """
+        if self.dispatcher is None:
+            return
+        min_action = self.dispatcher.min_action
+        if self.pipeline is not None:
+            min_action = self.pipeline.policy.notifications.min_action
+        try:
+            try:
+                rank = action_rank(event.verdict)
+            except KeyError:
+                return  # verdict=unassessed 等非四级动作（无策略管线的旧路径）不通知
+            if rank < action_rank(min_action):
+                return
+            self.dispatcher.enqueue(event)
+            self.notified_count += 1
+        except Exception:  # noqa: BLE001 - 通知绝不影响审计主路径（04 文档 §3）
+            logger.exception("通知入队异常（fail-open）")
+
+    def notify_stats(self) -> dict[str, Any]:
+        """通知统计（诊断/状态命令用；未启用通知时为 None 项）。"""
+        if self.dispatcher is None:
+            return {"enabled": False}
+        return {"enabled": True, "enqueued": self.notified_count, **self.dispatcher.stats()}
 
     def attribution_summary(self) -> dict[str, Any]:
         """归因统计（诊断/状态命令用）。"""

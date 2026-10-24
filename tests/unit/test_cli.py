@@ -34,7 +34,7 @@ def test_aaa_help_runs() -> None:
 def test_version_flag() -> None:
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "0.1.2" in result.output
+    assert "0.1.3" in result.output
 
 
 def test_run_local_rejected_without_admin(monkeypatch) -> None:

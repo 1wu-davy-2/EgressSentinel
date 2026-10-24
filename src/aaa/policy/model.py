@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aaa.notify.model import NotifyConfig, disabled_notify_config
+
 #: 四级动作（02 文档 D4：allow < alert < confirm < block）
 Action = Literal["allow", "alert", "confirm", "block"]
 
@@ -150,7 +152,7 @@ class ContentSection(_Strict):
 
 
 class PolicyDocument(_Strict):
-    """策略文档根模型（02 文档 §5）。"""
+    """策略文档根模型（02 文档 §5 + 04 文档 §2 通知段）。"""
 
     version: int = 1
     mode: PolicyMode = "dry-run"
@@ -160,6 +162,9 @@ class PolicyDocument(_Strict):
     content: ContentSection = Field(default_factory=ContentSection)
     volume: list[VolumeRule] = Field(default_factory=list)
     time_window: list[TimeWindowRule] = Field(default_factory=list)
+    notifications: NotifyConfig = Field(default_factory=disabled_notify_config)
+    """通知配置（04 文档 §2）。缺省段落=全关（老策略文件兼容，04 文档 §3 T1）；
+    段落存在但省略字段时按 ``NotifyConfig`` 字段级出厂默认（toast 开、webhook/email 关）。"""
 
     # ------------------------------------------------------------- 派生工具
 

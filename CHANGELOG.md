@@ -1,5 +1,32 @@
 # 更新日志 Changelog
 
+## [v0.1.3] - 2026-10-24
+
+### 新增
+
+- **告警通知渠道**（洞察清单 ①-1）：block / alert / confirm 事件发生时**即时通知用户**，
+  无需打开面板——审计的「最后一公里」：
+  - **Windows 系统通知（toast）**：PowerShell WinRT 实现，零第三方依赖，出厂默认开启
+    （本机通知、无外发）；
+  - **Webhook**：generic / 企业微信 / 钉钉 / 飞书 / Slack / Discord 六种 payload 形态，
+    3 秒超时、失败自动重试 1 次；`trust_env=False` 直连（绝不经本机代理，防回环）；
+  - **SMTP 邮件**：SMTP_SSL / STARTTLS 纯文本摘要；
+  - **防轰炸**：每通道滑动窗口限流（默认 10 条/分钟），超出部分自动合并为一条
+    「另有 N 条事件被限流」摘要；代理退出时有界排空（flush 2s）不丢 digest。
+- **通知正文与面板同一脱敏核心**：命中的密钥一律打码（`AKIA****YZ` 形态）后才出现在
+  通知里——绝不把拦截到的明文密钥再外发到 webhook/邮件（安全红线）。
+- **配置随策略热更新**：通知段在策略 YAML 的 `notifications` 段（pydantic 严格校验，
+  拼写错误即 lint 报错），改完保存约 2 秒生效，无需重启；老策略文件无该段=全关兼容。
+- **环境变量覆盖凭据**：`AAA_WEBHOOK_URL`、`AAA_SMTP_PASSWORD` 优先于策略文件——
+  webhook 地址内嵌 token、SMTP 密码不必落盘。
+- **`aaa notify test [--channel toast|webhook|email]`**：发一条测试通知（真实通道，
+  用户显式触发；失败如实以非零退出码报告）；`aaa status` 增加通知配置概要行。
+
+### 变更
+
+- `aaa run` 启动概要新增通知行（启用通道/门槛/限流）；事件库新增通知入队与被限流统计。
+- `policies/default.yaml` 新增 `notifications` 段（toast 开、webhook/email 关）。
+
 ## [v0.1.2] - 2026-10-24
 
 ### 新增

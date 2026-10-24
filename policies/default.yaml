@@ -68,3 +68,25 @@ time_window:
     match: { requests_gt: 60, window_seconds: 60 }
     action: alert
     weight: 20
+
+# 告警通知（04 文档 §2）：达到 min_action 门槛的事件即时通知用户，无需打开面板。
+# 老策略文件无本段=全关；段落存在但省略字段时按字段默认（toast 开）。
+notifications:
+  min_action: alert        # 通知门槛：alert | confirm | block（block 为最高）
+  toast:
+    enabled: true          # Windows 系统通知（PowerShell WinRT，零依赖，本机无外发）
+  webhook:
+    enabled: false
+    provider: generic      # generic | wecom | dingtalk | feishu | slack | discord
+    url: ""                # 环境变量 AAA_WEBHOOK_URL 优先（url 内嵌 token，勿外传）
+  email:
+    enabled: false
+    smtp_host: ""
+    smtp_port: 465
+    use_tls: true
+    username: ""
+    password: ""           # 仅存本机策略文件；环境变量 AAA_SMTP_PASSWORD 优先
+    from_addr: ""
+    to_addrs: []           # 列表
+  rate_limit:
+    max_per_minute: 10     # 每通道滑动窗口；超出部分合并为一条 digest

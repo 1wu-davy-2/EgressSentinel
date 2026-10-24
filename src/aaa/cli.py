@@ -40,6 +40,9 @@ from aaa.config import (
     resolve_retention_days,
 )
 from aaa.engine.pipeline import AuditPipeline
+from aaa.notify.channels import CHANNEL_NAMES, build_channels
+from aaa.notify.dispatcher import Dispatcher, build_dispatcher, notify_config_from_policy
+from aaa.notify.model import apply_env_overrides
 from aaa.policy.loader import PolicyError, PolicyLoader
 from aaa.setup import autostart as autostart_mod
 from aaa.setup import ca as ca_mod
@@ -52,6 +55,7 @@ from aaa.setup.state import StateFile
 from aaa.setup.wizard import collect_setup_plans, run_setup_wizard
 from aaa.store.db import DbEventStore, parse_since
 from aaa.store.decisions import DecisionStore
+from aaa.store.events import AuditEvent, Destination, RequestInfo, new_event_id
 from aaa.store.evidence import EvidenceStore
 from aaa.store.jsonl import JsonlEventStore
 
@@ -70,6 +74,8 @@ autostart_app = typer.Typer(
     no_args_is_help=True, help="开机自启计划任务（aaa run + 登录自检 watchdog）"
 )
 app.add_typer(autostart_app, name="autostart")
+notify_app = typer.Typer(no_args_is_help=True, help="告警通知（toast/webhook/email，04 文档）")
+app.add_typer(notify_app, name="notify")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -174,6 +180,7 @@ def run(
         if jsonl:
             store.mirror = JsonlEventStore(paths.raw_dir)
         evidence = EvidenceStore(paths.evidence_dir, rel_base=paths.data_dir)
+        dispatcher = build_dispatcher(policy_loader)
         addon = AuditAddon(
             store,
             evidence,
@@ -182,6 +189,7 @@ def run(
             pipeline=pipeline,
             pinned_process=pinned,
             decisions=DecisionStore(paths.decisions_file, default_ttl=resolve_confirm_ttl(None)),
+            dispatcher=dispatcher,
         )
         engine = CaptureEngine(
             ProxyConfig(
@@ -214,6 +222,7 @@ def run(
             f"启动自动清理：删除 {trimmed['events']} 条过期事件"
             f"（保留期 {retention} 天，连带证据 {trimmed['evidence']} 个）"
         )
+    console.print(_notify_summary_line(policy_loader, dispatcher))
     console.print("按 Ctrl+C 优雅退出；关机/注销时自动限时收尾（不阻塞系统关机）。")
     if log_file is not None:
         _append_log(
@@ -227,9 +236,25 @@ def run(
     try:
         engine.run_blocking()
     finally:
+        # 04 文档 §5：退出时 flush 通知（在 engine 停止后、store.close 前，有界 2s）
+        dispatcher.flush(2.0)
         store.close()
         if log_file is not None:
             _append_log(log_file, "aaa 已停止（正常退出或收到关机信号）")
+
+
+def _notify_summary_line(policy_loader: PolicyLoader, dispatcher: Dispatcher) -> str:
+    """启动概要的通知行（04 文档 §5：启动打印通知通道概要）。"""
+    config = notify_config_from_policy(policy_loader)
+    channels = config.enabled_channel_names()
+    enabled = ", ".join(channels) if channels else "全部关闭"
+    extra = ""
+    if config.webhook.enabled and config.webhook.url:
+        extra = f"（provider={config.webhook.provider}）"
+    return (
+        f"通知：{enabled}{extra}；门槛 min_action={config.min_action}；"
+        f"限流 {config.rate_limit.max_per_minute} 条/分钟（超出合并为 digest）"
+    )
 
 
 def _append_log(log_file: Path, message: str) -> None:
@@ -555,6 +580,96 @@ def watchdog(
 
 
 # --------------------------------------------------------------------------
+# notify：告警通知（04 文档 T6：真实通道需用户显式触发）
+# --------------------------------------------------------------------------
+
+
+def _build_test_event() -> AuditEvent:
+    """合成一条测试事件（``aaa notify test`` 用；不含任何真实数据）。"""
+    return AuditEvent(
+        id=new_event_id(),
+        ts=_now_iso_ms(),
+        mode="test",
+        verdict="block",
+        risk_score=100,
+        destination=Destination(host="notify-test.example", port=443),
+        request=RequestInfo(method="POST", path="/aaa/notify/test", size=0),
+    )
+
+
+def _now_iso_ms() -> str:
+    from datetime import datetime
+
+    return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
+def _test_summary_text(channel_name: str) -> str:
+    from aaa.notify.summary import SUMMARY_MAX_CHARS
+
+    ts = _now_iso_ms()
+    return (
+        "这是一条测试通知（aaa notify test）。\n"
+        f"通道 {channel_name} 工作正常；此后 block/alert 命中事件的摘要会经此送达。\n"
+        f"发送时间：{ts}"
+    )[:SUMMARY_MAX_CHARS]
+
+
+@notify_app.command("test")
+def notify_test(
+    channel: str | None = typer.Option(  # noqa: B008 - typer 惯用法
+        None, "--channel", help="toast | webhook | email（缺省=策略启用的全部通道）"
+    ),
+    data_dir: Path | None = DataDirOpt,
+    policy: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
+        None, "--policy", help="策略 YAML 文件（默认 policies/default.yaml）"
+    ),
+) -> None:
+    """发送一条测试通知（走真实通道，用户显式触发；04 文档 §5 T6）。
+
+    webhook/email 的实际送达取决于外部服务，失败会如实以非零退出码报告。
+    """
+    if channel is not None and channel not in CHANNEL_NAMES:
+        raise typer.BadParameter(f"--channel 只支持 {'|'.join(CHANNEL_NAMES)}，收到 {channel!r}")
+    try:
+        loader = PolicyLoader(policy or DEFAULT_POLICY_FILE)
+        loader.load()
+    except PolicyError as exc:
+        err_console.print(f"[red]策略加载失败：{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    config = notify_config_from_policy(loader)
+    names = [channel] if channel is not None else config.enabled_channel_names()
+    if not names:
+        err_console.print(
+            "[yellow]当前策略未启用任何通知通道。[/yellow]\n"
+            "在策略 YAML 的 notifications 段启用（toast/webhook/email），"
+            "或设置 AAA_WEBHOOK_URL 快速试用 webhook。"
+        )
+        raise typer.Exit(code=1)
+    built = {ch.name: ch for ch in build_channels(config)}
+    event = _build_test_event()
+    failed = False
+    for name in names:
+        target = built.get(name)
+        if target is None:
+            err_console.print(
+                f"[red]通道 {name} 未启用或配置不完整。[/red]webhook 需 "
+                "notifications.webhook.enabled: true 且 url 非空（或设 AAA_WEBHOOK_URL）；"
+                "email 需 smtp_host 与 to_addrs。"
+            )
+            failed = True
+            continue
+        try:
+            target.send_checked(_test_summary_text(name), event)
+        except Exception as exc:  # noqa: BLE001 - CLI 边界如实报告失败
+            err_console.print(f"[red]{name} 发送失败：{exc}[/red]")
+            failed = True
+        else:
+            console.print(f"[green]{name} 测试通知已发送[/green]")
+    if failed:
+        raise typer.Exit(code=1)
+
+
+# --------------------------------------------------------------------------
 # status / tail / report / trim（03 文档 T4.2）
 # --------------------------------------------------------------------------
 
@@ -608,12 +723,23 @@ def status(
     table.add_row("防火墙加固（harden）", "未实施（P6 占位，见 03 文档 T6.1）")
 
     # —— 策略 ——
+    notify_desc = "-"
     try:
         doc = PolicyLoader(policy or DEFAULT_POLICY_FILE).load()
         policy_desc = f"mode={doc.mode} version={doc.policy_version}"
+        # 通知配置概要（04 文档 T6；不含 url/密码——webhook url 内嵌 token 属凭据）
+        notify_cfg = apply_env_overrides(doc.notifications)
+        enabled = ", ".join(notify_cfg.enabled_channel_names()) or "全部关闭"
+        notify_desc = (
+            f"{enabled}；门槛 min_action={notify_cfg.min_action}；"
+            f"限流 {notify_cfg.rate_limit.max_per_minute} 条/分钟"
+        )
+        if notify_cfg.webhook.enabled:
+            notify_desc += f"；webhook provider={notify_cfg.webhook.provider}"
     except PolicyError as exc:
         policy_desc = f"策略加载失败：{exc}"
     table.add_row("策略", policy_desc)
+    table.add_row("通知", notify_desc)
 
     # —— 事件库 ——
     try:
