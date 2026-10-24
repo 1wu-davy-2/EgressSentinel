@@ -1,4 +1,4 @@
-"""五维求值管线（02 文档 D4，03 文档 T3.2；v0.2.0 安全深化扩展）。
+"""五维求值管线（02 文档 D4，03 文档 T3.2；v0.2.0 安全深化扩展；v0.3.0 性能扩展）。
 
 维度：domain（分类 + unknown 首连）、process（画像）、content（secrets/pii/code_leak/
 repo_fingerprint）、volume（体量）、time_window（进程×域名滑动窗口速率）。
@@ -7,6 +7,11 @@ repo_fingerprint）、volume（体量）、time_window（进程×域名滑动窗
 v0.2.0（05 文档波次二）：新增响应侧求值 :meth:`AuditPipeline.evaluate_response`
 （注入特征扫描 + response 规则，仅 alert 级标注、绝不阻断）与 ``repo_fingerprint``
 内容扫描器（本地仓库指纹比对，命中清单附进事件 matched_rules 的 extra）。
+
+v0.3.0（06 文档 W4）：内容扫描**采样**——body 超过 ``defaults.max_body_scan`` 时，
+除 secrets 保持既有整段扫描（行为不回退）外，其余扫描器只扫描前
+``sampling.head_bytes``（默认 262144）字节，保证大上传低延迟；采样经
+:class:`SamplingConfig` 注入构造器（策略 ``sampling:`` 段由波次二集成接线）。
 """
 
 from __future__ import annotations
@@ -19,6 +24,8 @@ from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from aaa.engine.verdict import (
     DIM_CONTENT,
@@ -40,6 +47,7 @@ from aaa.policy.model import (
 from aaa.scanners import scan_code_leak, scan_pii, scan_secrets
 from aaa.scanners.base import ScanHit, ScanResult
 from aaa.scanners.injection import InjectionHit, scan_injection, worst_severity
+from aaa.scanners.secrets import SCANNER_NAME as SECRETS_SCANNER_NAME
 from aaa.store.events import ProcessInfo
 
 logger = logging.getLogger(__name__)
@@ -52,6 +60,31 @@ BUILTIN_SCANNERS: dict[str, ScannerFn] = {
     "pii": scan_pii,
     "code_leak": scan_code_leak,
 }
+
+#: 采样豁免名单（06 文档 W4）：body 超限时仍保持既有整段扫描的扫描器。
+#: secrets 是泄露判定的核心信号且逐行匹配 + 关键词守卫，成本可控——
+#: **行为不回退**（不因采样少扫）；其余扫描器（pii/code_leak/repo_fingerprint…）
+#: 只扫前 ``sampling.head_bytes`` 字节。
+SAMPLING_EXEMPT_SCANNERS: frozenset[str] = frozenset({SECRETS_SCANNER_NAME})
+
+
+class SamplingConfig(BaseModel):
+    """内容扫描采样配置（06 文档 W4 ``sampling: {head_bytes: ...}``）。
+
+    - ``enabled``：默认开。缺省 ``head_bytes`` 与 ``defaults.max_body_scan``
+      出厂值相同（256KiB）——此时采样零行为差异；只有策略调高 ``max_body_scan``
+      （想扫更大上传）时采样才真正省钱：secrets 仍扫 ``max_body_scan`` 段，
+      其余扫描器封顶 ``head_bytes``；
+    - 波次二接线：``policy.sampling`` 段（``policy/model.py`` 归集成阶段所有）
+      → ``AuditPipeline(loader, sampling=...)``；本模型独立于 :class:`PolicyDocument`，
+      支持传 dict（``{"head_bytes": 262144}``）或实例。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    head_bytes: int = Field(default=262144, ge=1)
+
 
 #: 仓库指纹扫描器注册名（policy content.scanners 引用；策略未启用指纹时不注册）
 FINGERPRINT_SCANNER_NAME = "repo_fingerprint"
@@ -162,6 +195,7 @@ class AuditPipeline:
         scanners: Mapping[str, ScannerFn] | None = None,
         clock: Callable[[], float] = time.monotonic,
         fingerprint_index: FingerprintIndex | None = None,
+        sampling: SamplingConfig | Mapping[str, Any] | None = None,
     ) -> None:
         self.loader = policy_loader
         self._scanners: dict[str, ScannerFn] = (
@@ -170,14 +204,22 @@ class AuditPipeline:
         if fingerprint_index is not None and FINGERPRINT_SCANNER_NAME not in self._scanners:
             # 05 文档波次二 §2：策略启用指纹且拿到索引时注册 repo_fingerprint 扫描器
             # （测试显式注入的同名扫描器优先——注入面优先于自动装配）
-            self._scanners[FINGERPRINT_SCANNER_NAME] = make_fingerprint_scanner(
-                fingerprint_index
-            )
+            self._scanners[FINGERPRINT_SCANNER_NAME] = make_fingerprint_scanner(fingerprint_index)
+        # W4（06 文档）：内容扫描采样配置——None 取出厂默认（开，head 256KiB，
+        # 与 max_body_scan 出厂值相同，零行为差异）；dict 便于波次二从策略段直传。
+        if sampling is None:
+            self.sampling = SamplingConfig()
+        elif isinstance(sampling, SamplingConfig):
+            self.sampling = sampling
+        else:
+            self.sampling = SamplingConfig.model_validate(dict(sampling))
         self._clock = clock
         self._lock = threading.Lock()
         self._seen_hosts: set[str] = set()
         self._windows: dict[tuple[str, str], deque[float]] = {}
         self.evaluations = 0
+        #: 采样生效的扫描次数（body 超限被截头的非豁免扫描器调用数，观测用）
+        self._sampled_scans = 0
         self._last_policy_version: str | None = None
 
     # ------------------------------------------------------------------ 入口
@@ -392,8 +434,9 @@ class AuditPipeline:
             if fn is None:
                 logger.warning("策略启用了未知扫描器 %s（跳过）", scanner_name)
                 continue
+            body, scan_limit = self._sample_body(scanner_name, inp.body, limit)
             try:
-                results[scanner_name] = fn(inp.body, max_bytes=limit)
+                results[scanner_name] = fn(body, max_bytes=scan_limit)
             except Exception as exc:  # noqa: BLE001 - 带上扫描器名再抛（fail_open 记录用）
                 raise RuntimeError(f"scanner {scanner_name}: {exc}") from exc
         matched: list[MatchedRule] = []
@@ -403,6 +446,28 @@ class AuditPipeline:
                 continue
             matched.append(rule_match)
         return matched
+
+    def _sample_body(self, scanner_name: str, body: bytes, max_body_scan: int) -> tuple[bytes, int]:
+        """内容扫描采样（06 文档 W4）：返回 ``(扫描用 body, max_bytes)``。
+
+        - 采样关闭、或 body 未超 ``defaults.max_body_scan``：原样全扫（既有行为）；
+        - body 超限：
+          - ``secrets``（豁免名单）：仍交**完整 body**、``max_bytes=max_body_scan``
+            ——与既有路径逐字节一致（**行为不回退**：截断语义仍由扫描器内部
+            按字符执行，多字节边界不少扫）；
+          - 其余扫描器：只取前 ``min(head_bytes, max_body_scan)`` **字节**（在管线
+            侧先切片，扫描器无需解码整个大 body——大上传低延迟的关键），
+            ``max_body_scan`` 仍是硬上限（采样只会少扫、绝不比既有行为多扫）。
+        每次实际截头计数 ``sampled_scans``（观测用）。
+        """
+        if not self.sampling.enabled or len(body) <= max_body_scan:
+            return body, max_body_scan
+        if scanner_name in SAMPLING_EXEMPT_SCANNERS:
+            return body, max_body_scan
+        head = min(max_body_scan, self.sampling.head_bytes)
+        with self._lock:
+            self._sampled_scans += 1
+        return body[:head], head
 
     def _content_rule_hits(
         self,
@@ -432,9 +497,8 @@ class AuditPipeline:
             else:
                 first = result.hits[0]
                 evidence = first.evidence
-                detail = (
-                    f"{rule.scanner}:{first.rule_id}"
-                    + (f" (+{result.hit_count - 1} more)" if result.hit_count > 1 else "")
+                detail = f"{rule.scanner}:{first.rule_id}" + (
+                    f" (+{result.hit_count - 1} more)" if result.hit_count > 1 else ""
                 )
             extra: dict[str, Any] = dict(result.hits[0].extra) if result.hits else {}
             if rule.scanner == FINGERPRINT_SCANNER_NAME and result.hits:
@@ -553,4 +617,6 @@ class AuditPipeline:
                 "evaluations": self.evaluations,
                 "tracked_hosts": len(self._seen_hosts),
                 "tracked_windows": len(self._windows),
+                "sampled_scans": self._sampled_scans,
+                "sampling": self.sampling.model_dump(),
             }

@@ -1,0 +1,100 @@
+# strict profile —— 严格档（aaa policy use strict 切换）
+# 定位：enforce 真阻断——密钥外发与代码批量外发直接 403，采样收紧到 64KB。
+# 注意：enforce 下命中 block 规则的请求会被阻断，请先在 dry-run 观察一段时间再切换。
+version: 1
+mode: enforce
+defaults:
+  fail_open: true
+  max_body_scan: 262144
+
+domains:
+  classes:
+    known_ai_api:
+      - api.anthropic.com
+      - api.openai.com
+      - generativelanguage.googleapis.com
+      - api.deepseek.com
+      - api.moonshot.cn
+      - openrouter.ai
+    code_hosting:
+      - github.com
+      - api.github.com
+      - gitlab.com
+  rules:
+    - id: domain-unknown
+      match: { class: unknown }
+      action: alert
+      weight: 20
+    - id: domain-blocklist
+      match: { host_regex: '\.example-mal\.com$' }
+      action: block
+      weight: 80
+
+processes:
+  profiles:
+    agent_cli: { exe_regex: '(?i)(claude|cursor|codex|copilot|node|python|java)' }
+    browser: { exe_regex: '(?i)(chrome|msedge|firefox)\.exe$' }
+  rules:
+    - id: non-agent-to-ai-api
+      match: { profile_not: agent_cli, dest_class: known_ai_api }
+      action: confirm
+      weight: 30
+
+content:
+  scanners: [secrets, pii, code_leak]
+  rules:
+    - id: secret-leak
+      scanner: secrets
+      action: block
+      weight: 60
+    - id: pii-bulk
+      scanner: pii
+      match: { hits_gt: 10 }
+      action: confirm
+      weight: 40
+    - id: code-bulk-upload
+      match: { body_size_gt: 512000, code_likeness_gt: 0.6 }
+      action: block # 严格档：代码批量外发直接阻断
+      weight: 40
+
+volume:
+  - id: huge-body
+    match: { body_size_gt: 5242880 }
+    action: alert
+    weight: 20
+
+time_window:
+  - id: burst
+    match: { requests_gt: 30, window_seconds: 60 }
+    action: alert
+    weight: 20
+
+notifications:
+  min_action: alert
+  toast:
+    enabled: true
+  webhook:
+    enabled: false
+  email:
+    enabled: false
+  rate_limit:
+    max_per_minute: 20
+
+# 严格档收紧采样：大上传只扫头部 64KB（secrets 豁免全扫）。
+sampling:
+  enabled: true
+  head_bytes: 65536
+
+response:
+  rules:
+    - id: response-injection
+      patterns: all
+      action: alert
+
+# 多机聚合示例（默认仍关；填 url/token 并置 enabled: true 后生效，
+# 或直接用环境变量 AAA_HUB_URL + AAA_HUB_TOKEN）。
+hub:
+  enabled: false
+  url: ""
+  token: ""
+  batch_size: 50

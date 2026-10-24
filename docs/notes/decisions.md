@@ -505,7 +505,421 @@
   为准绳；全部落位均有对应单测/契约断言（tests/unit/test_security_deepening.py、
   tests/e2e/test_security_deepening_e2e.py）。
 
+## D-2026-10-25-40 W1 服务化（06 文档波次一）的规格空档落位：XML 形态 / SYSTEM 账户 / 提权门禁 / teardown 接线
+
+- 规格原文："`install_service(state, data_dir)`：schtasks 创建 `EgressSentinel-Service`——
+  `ONSTART` 触发、`RL HIGHEST` 可选参数、隐藏运行 `aaa run --log-file data/service.log`
+  （复用 autostart_command 的解释器策略）；与既有 AutoStart/Watchdog 任务互斥提示；
+  journal-first（kind=`service_task`）+ `restore_service`（幂等删任务）；`service_status()`"。
+  未定处按最保守且与既有模块同构的形态落位（`src/aaa/setup/service.py`）：
+  1) **XML 而非 schtasks 参数行**：用 `/Create /TN ... /XML ...` + `BootTrigger`
+     （语义等价 `/SC ONSTART`），避开 `/TR` 261 字符上限与引号转义坑，与
+     autostart.py 的任务创建同构；`RL HIGHEST` 落为 `<RunLevel>`，由
+     `install_service(..., highest=True)` 可选参数控制（False→LeastPrivilege）。
+  2) **SYSTEM 账户**：ONSTART 任务以 SYSTEM 运行（XML `<UserId>S-1-5-18</UserId>`），
+     与 `schtasks /SC ONSTART` 的默认账户语义一致；无人登录的开机场景才能拉起代理。
+  3) **提权门禁留给集成层**：创建 ONSTART+SYSTEM 任务需管理员；cli.py 全局禁改，
+     库层不做门禁，仅创建失败时抛 `ServiceError`（journal 记录保留可重试，错误信息
+     注明需管理员）。建议集成时仿 `aaa harden on`：`aaa service install` 非提权 exit 2
+     （admin.is_current_process_elevated + UAC 指引）。
+  4) **teardown 接线走扩展点**：teardown.py 为共享文件（不在 W1 独占清单），不改；
+     `service.py` 经 `register_restorer(KIND_SERVICE_TASK, restore_service)` 自注册
+     （teardown.py:71 提供的扩展点，CA 同款机制），import 本模块即生效。
+     注意 `teardown_target_kinds` 的映射（teardown.py:91）尚无 `service` 目标——
+     建议集成时 `aaa service uninstall` 直接调 `uninstall_service`，或在集成阶段
+     给映射补 `"service": {KIND_SERVICE_TASK}`（W6 的 daily_task 同样面临此空档）。
+  5) **解释器策略复制而非参数化**：`service_command` 复制 autostart_command 的
+     策略（frozen→cmd start /min；venv→pythonw 缺失时退回当前解释器），仅日志名
+     不同（service.log）；autostart.py 非本模块独占文件，不做侵入式改动。
+  6) **互斥提示为建议不阻断**：双通道判定——journal 有 `autostart_task`/
+     `watchdog_task` 记录（setup 装过）**或** schtasks /Query 任务存在（手动装过）
+     都在返回值 `ServiceInstallResult.warnings` 中给出"建议 aaa teardown autostart"
+     的提示；`service_status().conflict` 与 warnings 同一口径（布尔化），避免双标。
+  7) **journal 元数据扩展**：`new` 记录在 autostart 四字段（task_name/xml/command/
+     arguments）基础上加 `log_file` 与 `run_level`，供 `service_status` 只读展示。
+- 对应单测：tests/unit/test_service.py（11 例：创建与 journal-first / ONSTART XML /
+  解释器策略 / 互斥提示双通道 / 失败记录保留 / 卸载与还原幂等 / RESTORERS 注册 /
+  状态查询），全部 mock `_run_schtasks`，绝不真实施改。
+
+## D-2026-10-25-41 W2 托盘（06 文档波次一）的规格空档落位：SVG 图标渲染 / 状态只读口径 / 停止代理保守语义
+
+- 规格原文："`run_tray(data_dir)`：lazy import pystray/Pillow（未装给出 pip 提示并退出码 2）；
+  菜单：状态（调 watchdog/自检结果只读展示）/ 打开面板（起 `aaa web` 子进程）/
+  启动代理（spawn_run_now）/ 停止代理（按端口探测 pid？保守：提示用 `aaa teardown`/
+  结束进程树——v1 菜单项「重启代理」=spawn + 提示）/ 退出；图标：优先
+  `website/icon.svg`→Pillow 渲染，缺省纯色盾形绘制；pystray Icon 全部注入式
+  （`_icon_factory`）"。未定处按最保守且可测的形态落位（`src/aaa/tray.py`）：
+  1) **SVG 图标渲染空档**：Pillow 本身不支持 SVG 栅格化（无内置渲染器，环境亦无
+     cairosvg），"icon.svg→Pillow 渲染"字面不可达。落位为四级降级链，任何一级失败
+     都降级到下一级（debug 日志，托盘总能拿到图）：icon.svg 经**可选**渲染后端
+     （cairosvg，函数内 lazy import，非声明依赖——pyproject 全局禁改，不能加依赖）
+     → `website/icon-192.png`（与 svg 同源位图，项目已有）→ 纯色盾形 Pillow 原语
+     绘制（圆角底 #2BD6C3 取 svg 渐变中点色 + 白盾描边 + 外发箭头，几何近似 svg）。
+     website/ 全局禁改：托盘只**读**其 icon.svg/icon-*.png，不写不改。
+  2) **「状态」只读展示口径**：未直接调 `run_watchdog`——它每次运行追加写
+     `data/watchdog.log`，而托盘状态行每次打开菜单都会求值文本，会产生日志噪音，
+     与"只读展示"矛盾。落位：复用 watchdog 的判定原语（`proxy_endpoint` +
+     `port_open`，三态语义一致 idle/ok/degraded），不写任何日志（单测断言
+     watchdog.log 不产生）；状态文案为 callable，pystray 打开菜单时实时求值，
+     无轮询线程。
+  3) **停止/重启代理**：按 spec 保守口径，v1 不做真"停止"菜单项；落位「重启代理」
+     = 复用 `autostart.spawn_run_now` + 气泡提示"旧进程未自动停止：请运行
+     `aaa teardown` 或结束旧进程树"（托盘自身绝不杀进程/改代理设置，只读编排层）。
+     「打开面板」先探测端口（复用 `watchdog.port_open`），8787 已在听则只提示
+     URL 不重复拉起 `aaa web`；面板子进程与 spawn_run_now 同策略（frozen→exe，
+     源码→pythonw 无窗口）+ DETACHED_PROCESS。
+  4) **注入面比 spec 点名的更宽**：spec 只点名 `_icon_factory`，但单测要在
+     **未装 pystray 的环境**验证"菜单构建/回调装配"，Menu/MenuItem 必须一并注入
+     （`menu_cls`/`item_cls`，缺省在依赖加载成功后才从 pystray 取）；另有
+     `_deps_loader`（依赖加载）、`_popen`/`_spawn_run_now`（子进程）、`_port_open`
+     （端口探测）。真实 pystray 路径（默认从 pystray 取三原语）由
+     `test_run_tray_full_assembly_with_fakes` 的假模块命名空间覆盖装配顺序。
+  5) **退出码契约**：`run_tray` 返回 `int`——缺依赖 = `MISSING_DEPS_EXIT_CODE=2`
+     （stderr 打印含 `pip install -e .[tray]` 的提示，typer 命令可直接把返回值当
+     退出码）；正常退出（「退出」→`icon.stop()`）= 0。extras `tray=[pystray,Pillow]`
+     由集成阶段加进 pyproject（波次二第 4 条，pyproject 本模块禁改）。
+- 对应单测：tests/unit/test_tray.py（23 例：子进程验证模块导入零 GUI 依赖 / 缺依赖
+  退出码 2 与 pip 提示（含 venv 真实缺 pystray 的真实路径）/ 图标四级降级 / 状态
+  三态与零副作用 / 菜单 5 项与回调装配 / 面板端口去重 / 重启提示 / 全装配），全部
+  假注入，绝不真起托盘、绝不真起子进程。
+
+## D-2026-10-25-42 W7 规则市场（06 文档波次一）的规格空档落位：合并语义 / 落盘形态 / gitleaks 映射与跳过
+
+- 问题：06 文档 W7 只给了函数名与模式名（`merge=replace|union`、`sync_gitleaks(source=url|path)`、
+  「转换为内置 secrets 规则 YAML（正则+熵+allowlist 映射），附来源与 sha256 pin」），
+  以下空档需落位（全部为「规格未定」，不改变计划要求的行为）。
+- 选择：
+  1) **export/import 的落盘形态**：`export_section(policy_doc, section) -> str` 输出
+     **段内容本身**的 YAML（不带段名包裹），可直接回灌 `import_section` 的 `yaml_str`
+     （往返格式）；`import_section` 签名保持计划原文（`current_yaml` 为策略 YAML
+     **文本**），返回合并后的完整策略 YAML 文本，新增可选 `output_path`——三关校验
+     （导入段 → 合并结果 → 完整策略）全过才原子写（tmp+replace），不合法绝不写且
+     既有文件一字不动、不留 .tmp 残片。落盘为整文重写，原文件 YAML 注释会丢
+     （注释不进 pydantic 模型；集成层 CLI 应向用户提示）。
+  2) **union 合并的逐值语义**：映射递归按键合并（键冲突导入者胜，本方独有键保留
+     ——部分字段导入只覆盖给出的字段，适配 notifications/defaults 嵌套段）；带字符串
+     id 的规则列表按 id 合并（同 id 导入者胜=整条覆盖，新 id 按导入顺序追加，本方
+     顺序不变）；无 id 列表（域名清单/收件人）去重并集（本方在前）；标量导入者胜。
+     replace 即整段替换（省略字段回落 schema 出厂默认，与「段落存在但省略字段按
+     字段默认」的既有口径一致）。
+  3) **gitleaks 转换映射**：`regex→pattern`、`entropy→entropy`（对整段匹配生效）、
+     `keywords→keywords`（统一转小写——本项目扫描器按行小写包含匹配）、
+     `[allowlist]`/`[[rules.allowlists]]` 的 `regexes`→包级/规则级 allowlist；
+     `paths/commits` 等文件维度条目对本引擎无意义，忽略。
+  4) **不支持特性如实跳过（记包 meta.skipped：id+原因，绝不静默丢）**：带
+     `secretGroup` 的规则（本引擎按整段匹配，熵守卫对含前缀整段会失真，宁跳过
+     不带病转换）、Python 编译不过的 Go 正则、缺 id/regex、重复 id（保留首条）；
+     坏 allowlist 正则只丢该条 allowlist（保守方向：至多多报、不漏报）。转换结果
+     为空拒绝生成规则包（不落空包）。
+  5) **规则包格式与扫描接线**：包为 pydantic 严格模型 `SecretsRulePack`
+     （meta[source/sha256/synced_at/rule_count/skipped] + allowlist + rules），
+     pattern/allowlist 构建即编译校验；sha256 pin=来源 TOML 原始字节的 sha256，
+     同时落包 meta 与同步回执 `GitleaksSyncResult`。`scan_with_pack` 复用
+     `scanners/secrets.iter_secret_spans` 匹配核心再叠加包 allowlist 过滤——
+     **不改 scanners/secrets.py**（该目录无独占归属，为避免与并行模块冲突本波次
+     不动它）；`to_secret_rules` 供集成侧按需装配为 `SecretRule` 元组。
+  6) **网络注入面**：URL 下载走 `FetchClient` 协议 + `client_factory` 注入（默认
+     httpx `trust_env=False` 直连防自代理回环，与 judge/webhook 同约定）；本地路径
+     同步不触碰网络（连客户端工厂都不调用）。
+- 对应单测：tests/unit/test_ruleshub.py（40 例：导出往返 / 段导出形态 / replace /
+  union 按 id 合并与嵌套键保留 / 9 种非法导入不落盘不留 tmp / gitleaks 两条 TOML
+  样本的映射与跳过 / pin 记录 / 假客户端 URL 同步 / HTTP 与网络异常不落盘 /
+  包扫描 allowlist 端到端），零真实网络、落盘仅 tmp_path。
+
+## D-2026-10-25-43 W3 安装器（06 文档波次一）的规格空档落位：iss_version 归属 / 卸载顺序 / 产物对账
+
+- 背景：06 文档 W3 所有权表只列了「installer/ 新目录 + build.yml 唯一可改 +
+  tests/unit/test_installer.py」，但正文提到 `scripts/iss_version.py`。落位如下：
+  1) **`scripts/iss_version.py` 由 W3 创建**（06 文档 39 行明确「版本号从
+     scripts/iss_version.py 注入（读 pyproject）」，且其他并行模块均未认领
+     scripts/）。行为：tomllib 读 pyproject `[project] version` 后 stdout 输出；
+     缺失/损坏时**非零退出**，绝不输出兜底版本号（错版安装包比失败构建更危险）。
+  2) **卸载「先 teardown 再删文件」的机制**：Inno `[UninstallRun]` 官方语义保证
+     在删除已安装文件**之前**执行、且默认逐条等待退出（jrsoftware.org/ishelp
+     topic_runsection.htm；`waituntilterminated` 显式声明自证）。teardown 条目调
+     用 `{app}` 下的 `ai-agent-audit.exe teardown`（幂等：状态文件为空即 no-op
+     exit 0；个别还原失败 exit 1 不阻塞卸载，记录保留可重跑）。teardown 之前先
+     taskkill 结束常驻进程：`aaa teardown` 本身不杀进程（cli.py 的 teardown 只还
+     原注册表/任务/证书等），不先结束进程则 exe 被占用、删文件阶段必失败；
+     taskkill 找不到进程返回非零，Inno 不校验退出码，无副作用。
+  3) **卸载不删 data/**：`{app}` 下 data/（audit.db、evidence、日志）属用户数据，
+     卸载刻意保留；teardown 只还原系统级改动，不删数据文件。
+  4) **安装器绝不自动 setup**：[Run] 仅提供「查看 README」复选；CA/代理/环境变量
+     等系统改动保持用户显式执行 `aaa setup`（与 03 文档「执行前打印 + 确认」红线
+     一致）。
+  5) **installer job 复用 build 产物**：needs: build + download-artifact
+     `egress-sentinel-windows-amd64`（= build job 上传模板 `egress-sentinel-<os>-<arch>`
+     在 windows/amd64 腿的解析结果，test_installer.py 做解析对账），还原到 ISS
+     期望的 `dist/ai-agent-audit.exe` 后编译；不重复跑 PyInstaller 构建。
+  6) **.iss 编码**：UTF-8 with BOM（中文内容在 <6.3 的 Inno 需要 BOM 才不会被当
+     ANSI；≥6.3 BOM 可选，带 BOM 对所有 Unicode Inno 6 版本无歧义）；
+     `ArchitecturesAllowed=x64compatible` 需 Inno ≥6.3（choco innosetup 装最新
+     稳定版，满足）。.iss 段内条目不支持续行符，全部单行（test_installer.py 有
+     回归断言）。
+  7) **版本占位守卫**：.iss 顶部 `#ifndef MyAppVersion` 即 `#error`，杜绝未经注入
+     直接编译产出错版安装包；OutputBaseFilename 为
+     `egress-sentinel-setup-v{#MyAppVersion}`，与 build.yml installer job 的
+     artifact/upload/release 模式 `dist/egress-sentinel-setup-*.exe` 对账（tag
+     `v*` → 文件名 `egress-sentinel-setup-v<版本>.exe`）。
+- 对应单测：tests/unit/test_installer.py（23 例：BOM/无续行/五段齐全/版本占位与
+  #error/产物名 glob 对账/AppId 固定/安装内容与 build_exe.APP_NAME 一致/快捷方式/
+  [UninstallRun] teardown 先行且仅此一处/iss_version 读取-异常-退出码/build.yml
+  job 结构与 artifact 名解析对账），全静态校验，不执行 iscc、不联网。
 
 
+
+
+
+
+## D-2026-10-25-44 W5 CLI i18n 的四处规格空档落位（06 文档波次一）
+
+- 日期：2026-10-25；模块：W5（src/aaa/i18n.py + src/aaa/locales/{zh,en}.py）
+- 问题与落位：
+  1) **未知语言值的行为**：``AAA_LANG`` 或运行时 ``set_lang``（将来接 ``--lang``）
+     收到 zh/en 之外的值时如何处理，规格未定。落位：**静默回落 zh 并继续**（不报
+     错不退出）。理由：i18n 只影响文案语言，报错会把"拼错一个环境变量"升级成功能
+     故障；默认 zh 与"出厂输出不变"一致。
+  2) **缺 key 与插值失败的兜底**：``t()`` 在当前语言缺 key 时回落 zh 原文并计数告
+     警（规格明示）；zh 也缺时返回 key 本身、``str.format`` 占位符与实参不匹配时
+     返回未插值原文——均计数（``missing_counts()``，插值失败记 ``<key>#format``）
+     且**绝不抛异常**（一次缺失只计一次，同一 key 的 warning 去重只发一次）。
+     理由：集成阶段机械包裹 cli.py 后，词条问题绝不允许中断 CLI 主流程。
+  3) **词条收录范围**：规格点名 console.print/err_console.print/BadParameter/help/
+     docstring 首行四类。落位：另外收录 **typer.confirm 提问语**（wizard.confirm_step、
+     cli.autostart_on.confirm、cli.harden.confirm 等属于用户可见交互文案）与
+     **status/policy_lint 表格的字段标签行**（如 "version"/"fingerprint"，en 译文
+     = 原文自身），保证集成阶段"机械包裹"无遗漏；**logging（``logger.warning``）与
+     写文件日志（``_append_log`` 内容、watchdog.log）不计入**——非 CLI 渲染通道，
+     且规格列举未含。``cli.status`` 安全深化四对开关原文为 f-string 内嵌条件
+     （``f"指纹={'开' if doc.fingerprint.enabled else '关'}"``），目录抽成
+     ``指纹=开``/``指纹=关`` 两键由集成按条件选择，属等价重构（AST 校验仅这 8 条
+     非逐字，其余 279/287 条与源文件逐字可覆盖）。
+  4) **``catalogue_coverage()`` 的 "key 数" 口径**：以 **zh 权威目录**为准（keys、
+     untranslated= en 相对 zh 缺失数）；en 目录要求全量翻译交付（untranslated==0，
+     单测锁定），后续新增词条若未译会在统计中如实暴露。
+- 交付物：src/aaa/i18n.py、src/aaa/locales/（zh 287 条原文 / en 287 条译文）、
+  tests/unit/test_i18n.py（22 条：语言优先级/回退/格式化/覆盖统计/占位符一致性）。
+  测试全注入（monkeypatch env/内存目录），无网络无系统改动。
+
+## D-2026-10-25-45 W6 日报（06 文档波次一）的五处规格空档落位：签名 / 聚合口径 / 周窗 / SMTP 复用方式 / 包文件
+
+- 日期：2026-10-25；模块：W6（src/aaa/reporting/daily.py + tests/unit/test_daily_report.py）
+- 问题与落位：
+  1) **``install_daily_task`` 签名缺数据目录**：规格写 ``install_daily_task(state,
+     hour=9)``，但任务命令行需显式 ``--data-dir``（与 ``autostart_command`` 同策略，
+     否则计划任务在非默认布局下会读错库）。落位：``install_daily_task(state,
+     data_dir, *, hour=9)``；命令行固定为 ``report --daily --email --data-dir <dir>``，
+     解释器策略（venv→pythonw/-c、frozen→cmd start /min）照搬 ``autostart_command``。
+  2) **聚合口径：自聚合而非 ``store.stats()``**：报告需小时级趋势（日报 24 桶）与
+     Top 事件（风险分降序），``stats()`` 只有 by_verdict/process/host/rule/day 且
+     ``until`` 为闭区间。落位：``_collect`` 单遍分页拉取（``query`` 500/页，上限
+     ``MAX_EVENTS=50000`` 超限如实标注 truncated）在 Python 侧统一聚合，报告内所有
+     数字单一口径；``since <= ts < until`` 左闭右开在渲染侧自保证（query 的闭区间
+     边界事件被过滤，不计入总数）。规则计数取 ``matched_rules[].id/dim``（不展示
+     evidence），与 db 侧 ``event_rules`` 同源。
+  3) **``render_weekly`` 的"周"定义**：规格未定。落位：含 ``day`` 的 **ISO 自然周
+     （周一为始，7 个天桶）**；标题标注起止日期。
+  4) **``email_daily`` 对 notify 的复用方式**：规格说"复用 notify/channels 的注入式
+     SMTP"，但 ``channels.send_email`` 固定纯文本（``set_content`` 无 subtype），
+     而 **channels.py 是并行共享文件**（不在 W6 独占清单，改它有写冲突风险）且顶层
+     ``import httpx``（非运行时依赖，日报不想连带）。落位：不改 channels.py，
+     ``email_daily(config, html, *, subject, sender)`` 镜像其注入式模式（默认实现
+     ``_send_html_email`` 同 SSL/starttls/超时 10s 形态，``set_content(subtype=
+     "html")``）；``EmailConfig`` 直接复用 notify.model。配置不完整（缺
+     smtp_host/to_addrs）**显式 ValueError** 而非 build_channels 的跳过——日报是
+     显式动作，静默跳过会被误认为已发送。
+  5) **``src/aaa/reporting/__init__.py``**：所有权表只列了 daily.py，包导入必需
+     ``__init__.py``（仅 docstring，无逻辑），视为模块交付的隐含部分。
+- 脱敏实现（规格红线）：Top 事件表的路径/进程名与 Top 进程榜的进程名先过
+  ``notify.summary.mask_event_path``（与通知摘要同一脱敏核心，decisions D-18/D-34），
+  所有表格单元格在 ``_table`` 单点 ``html.escape``；sparkline 为纯数值坐标的内联
+  SVG，天然免注入；报告不渲染 body/证据原文。冒烟验证：事件 path 携带假 AWS key、
+  ``matched_rules[].evidence`` 故意放未打码原文，HTML 中均无明文。
+- 交付物：src/aaa/reporting/daily.py（render_daily/render_weekly/sparkline_svg/
+  email_daily/install_daily_task/uninstall_daily_task/restore_daily_report_task，
+  import 即注册 teardown 还原器——``setup/service.py`` 同款机制）、
+  tests/unit/test_daily_report.py（18 条：聚合数字/趋势桶/Top 截断排序/脱敏/HTML
+  转义/sparkline 边界/注入式 email（含默认 smtplib 假连接 subtype 断言）/任务安装
+  journal-first 失败保留/hour 校验/卸载幂等/teardown 注册端到端/命令行策略）。
+  schtasks 与 smtplib 全 mock，无真实网络、无真实系统改动。
+
+
+## D-2026-10-25-46 W4 性能（06 文档波次一）的规格空档落位：采样配置归属 / secrets 不回退口径 / 批量 mirror 语义
+
+- 背景：06 文档 W4 要求「db.py：WAL + synchronous=NORMAL + insert_events 批量事务；
+  pipeline.py：内容扫描采样——body > defaults.max_body_scan 时除 secrets 首段全扫外，
+  其余扫描器仅扫描前 256KB（可配 sampling: {head_bytes: 262144}）」，落位如下：
+  1) **采样配置归属**：`policy/model.py` 在全局禁改清单（集成阶段专属），故
+     `SamplingConfig`（pydantic，extra=forbid；`enabled: bool = True`、
+     `head_bytes: int = Field(262144, ge=1)`）定义在 `engine/pipeline.py`，经构造器
+     注入：`AuditPipeline(loader, sampling=SamplingConfig|dict|None)`（dict 便于
+     波次二直传）。波次二接线：策略 `sampling:` 段（集成自行在 model.py 加字段）
+     → 构造器；`PolicyDocument` extra=forbid，当前策略文件写 `sampling:` 段会校验
+     失败——预期边界，由波次二放开；不传 = 出厂 SamplingConfig。
+  2) **「secrets 行为不回退」的实现口径**：secrets 在采样下保持与既有**逐字节一致**
+     的路径（完整 body + `max_bytes=max_body_scan`，截断仍由扫描器内部按字符执行，
+     多字节边界不少扫）；采样只作用于非豁免扫描器（`SAMPLING_EXEMPT_SCANNERS =
+     {"secrets"}`，即"secrets 首段全扫"的落位），且在管线侧**先按字节切片**
+     `body[:min(head_bytes, max_body_scan)]` 再交扫描器——扫描器不再解码整个大
+     body，这才是大上传低延迟的来源。`max_body_scan` 仍是硬上限：有效截断 =
+     min(max, head)，采样只会少扫、绝不比既有行为多扫；触发条件保持规格原文
+     （仅当 len(body) > max_body_scan，小 body 一律全量扫描）。
+  3) **采样默认开（enabled=True）**：出厂 head_bytes(262144) == max_body_scan 出厂
+     值，默认策略下零行为差异，不构成升级风险。波次二第 5 条「default.yaml：
+     sampling/hub/ 段（默认关）」若按"采样默认关"解读，应在 default.yaml 显式写
+     `enabled: false`——管线默认值与 default.yaml 默认值是两层独立默认。
+  4) **insert_events 的 mirror/返回值/原子性语义**：整批单事务（`with self._conn`）
+     提交，返回处理的事件数；JSONL mirror 在 DB 提交成功后**按序补写**，镜像异常
+     不回滚 DB（与逐条 append 同语义：落库为准，addon 钩子层 fail-open 兜底）；
+     空清单 no-op；同 id 重放 = INSERT OR REPLACE 覆盖（与逐条一致）；批内任一行
+     失败整批回滚（test_perf.py 坏行注入验证）。
+  5) **覆盖索引选型**（"stats/list 查询加 covering index 复核"）：新增 3 个复合
+     索引——`idx_events_ts_id (ts_epoch, id)`（列表页 ORDER BY 免 TEMP B-TREE）、
+     `idx_event_rules_event_dim (event_id, dim)`（dim 过滤 EXISTS 子查询
+     index-only）、`idx_event_rules_rule_dim (rule_id, dim)`（by_rule 聚合免回表）；
+     既有 4 个单列索引保留（test_db.py schema 断言与旧库兼容）。EXPLAIN QUERY
+     PLAN 断言落在 tests/unit/test_perf.py（本机 SQLite 3.42 实测计划文案）。
+  6) **已知限制与观测**：采样未命中时事件无"被采样"标注（miss 无 matched_rules
+     条目可挂），观测走 `AuditPipeline.stats()["sampled_scans"]`（截头次数）与
+     `stats()["sampling"]`（当前配置）；事务次数断言经 `set_trace_callback` 统计
+     BEGIN/COMMIT（Python 3.12 sqlite3 隐式事务可见，test_perf.py `_TxnCounter`）。
+- 交付物：src/aaa/store/db.py（synchronous=NORMAL 每连接重设 / insert_events /
+  3 个覆盖索引 / append 抽出 _event_row/_rule_rows 共用）、src/aaa/engine/pipeline.py
+  （SamplingConfig + _sample_body 采样 + sampled_scans 计数）、
+  tests/unit/test_perf.py（20 条）。测试：test_perf.py 全绿；受影响既有单测
+  （test_db/test_pipeline/test_engine/test_store/test_block/test_decisions/
+  test_web_api/test_cli_p4/test_policy_hot_reload_log/test_security_deepening）
+  合计 186 条全绿（junit：failures=0 errors=0 skipped=0）。无系统级操作、无网络。
+
+## D-2026-10-25-47 W8 多机聚合（06 文档波次一）的八处规格空档落位：wire 形态 / 摘要字段 / 中心鉴权 / 配置归属 / 缓冲语义 / 重试耗尽 / 端口 / 不加密边界
+
+- 日期：2026-10-25；模块：W8（src/aaa/hub/ + tests/unit/test_hub.py）
+- 问题：06 文档 W8 只给方向（agent 端"脱敏事件摘要 POST，队列+重试+批量 ≤50、
+  trust_env=False"；中心端"独立 FastAPI app、Bearer 校验、内存缓冲→SQLite
+  hub.db、机器名维度、跨机聚合查询"），若干形态未定，逐一落位如下。
+- 选择：
+  1) **wire 形态**：`POST {基地址}/ingest`（`url` 结尾 `/` 容忍，`/ingest` 由
+     Forwarder 追加）；鉴权**双重比对**——`Authorization: Bearer <token>` 请求头
+     为权威校验，body `token` 字段（规格字面要求存在于 `{token, host, events}`）
+     必须同时匹配，任一不匹配 401（`secrets.compare_digest` 恒时比较）。
+     Forwarder 两侧同时携带，第三方客户端须按同协议实现。
+  2) **摘要字段形态**（"脱敏事件摘要"的结构落位）：`summarize_event` = 事件结构
+     化字段（verdict/risk_score/process/destination/request/matched_rules）+
+     `build_summary` 脱敏文本（`summary` 键）。自由文本字段（path/exe/cmdline/
+     name/error）过 `mask_event_path` 同一脱敏核心；`matched_rules` 白名单化为
+     id/dim/action/weight/severity/evidence（evidence 扫描时已打码，外发前再打
+     一道，防线叠加）；**丢弃 `evidence` 文件信息**（指向 agent 本机路径，hub
+     侧无意义）与 `judge_note.reason`（模型理由可能引用请求内容），judge_note
+     只留 status/is_violation/confidence/category 白名单。脱敏责任在 agent 侧，
+     中心不二次脱敏、也拿不到 body（事件模型本就不含 body）。
+  3) **中心 GET 端点也要求 Bearer**（规格只写 ingest 校验）：hub 监听局域网
+     （要收多机上报，**不适用面板的回环限制**），事件摘要虽脱敏仍是跨机审计
+     数据，只读接口 `/api/hub/events|stats|machines` 一律 401 保护。
+  4) **配置归属**：`policy/model.py` 属全局禁改 → `HubConfig`（extra="forbid"，
+     enabled/url/token/batch_size≤50/timeout）定义在 `hub/model.py`，波次二
+     集成时挂到 PolicyDocument 或由集成层透传；env 覆盖 `AAA_HUB_URL/TOKEN`
+     （D-33 试用意图的**收窄版**：仅当策略从未配置 url+token 而环境变量把两者
+     都补齐才自动启用——策略显式 `enabled: false` 永远获胜；且只给 url 不启用，
+     避免差 token 的 Forwarder 空转 401）。
+  5) **内存缓冲语义**：ingest 先进内存缓冲，达 `flush_threshold`（默认 100）
+     自动单事务落盘，`flush()`/`close()` 兜底；缓冲上限（默认 10000）防落盘
+     持续失败时内存膨胀（丢最旧并计数）；SQLite 写失败事件退回缓冲、如实计
+     `flush_errors`，绝不静默丢。落盘以 `(machine, id)` 为主键 INSERT OR
+     REPLACE——同机同事件重发幂等去重；规则明细进 `hub_event_rules` 供按规则
+     聚合（db.py `event_rules` 同款形态）；`trim(days)` 治理保留期。
+  6) **重试耗尽语义**：整批丢弃并计数（dropped/send_errors/last_error），**不
+     无限重排队列**——重排会让持续故障的 hub 拖垮本机队列进而丢新事件，与
+     notify dispatcher"绝不影响代理主路径"同一取舍；线性退避（backoff×n），
+     默认重试 2 次；enqueue 永不阻塞（队列满丢弃计数）。
+  7) **默认端口 8788**：面板 8787 / 代理 8080 之外取相邻空闲段；`run_hub`
+     （uvicorn 懒导入）由波次二 `aaa hub serve` 接线，host 缺省 0.0.0.0。
+  8) **hub.db 不加密**：与 audit.db 同边界（D-2026-10-24-36 第 6 条理由全适用：
+     库文件在中心机数据目录、内容为已脱敏摘要、有 trim 保留期），需要保密依赖
+     磁盘级加密；不在本模块引入 SQLCipher 类依赖。
+- 理由：全部落位以"脱敏红线不松动、主路径永不阻塞、鉴权从紧、失败如实计数"
+  为准绳；全部有对应单测覆盖。
+- 交付物：src/aaa/hub/（model.py 配置 / forwarder.py Forwarder+summarize_event /
+  collector.py HubCollector+create_hub_app+run_hub）、tests/unit/test_hub.py
+  （22 条：脱敏不外发 / 批量 50/50/20 与 wire 形态 / 重试与线性退避 / 耗尽整批
+  丢弃 / 客户端工厂异常不杀 worker / 队列溢出丢弃 / close 后忽略入队 / 鉴权
+  401 矩阵（无头/错头/错 scheme/body 不匹配）/ 422 校验矩阵 / 缓冲落盘与重启
+  存活 / 阈值自动落盘 / 幂等去重 / trim / 跨机聚合 / since-until / TestClient
+  进程内全链路往返含错 token 不污染中心库）。httpx 客户端全注入、TestClient
+  进程内传输，零真实网络、零系统改动。
+
+## D-2026-10-25-48 波次二集成（06 文档）的规格落位：--lang 双通道 / profile 拷贝语义 / 两层采样默认 / hub 接线形态 / 批量落盘边界
+
+- 日期：2026-10-25；范围：06 文档波次二任务 1-8 的集成决策（波次一 D-40～D-47 的
+  预留空档逐一兑现）。全部为「规格未定」落位，不改计划要求的行为。
+- 选择：
+  1) **--lang 双通道**：typer 的 help= 文本在装饰器求值（模块导入期）取词，
+     命令行参数解析晚于此——``--lang en --help`` 想渲染英文帮助，唯一时机是
+     导入期。落位：cli.py 在**装饰器之前**做模块级 argv 预扫描（``_prescan_lang``，
+     只匹配子命令之前选项区的精确 ``--lang``/``--lang=`` token；pytest 等库导入
+     场景 argv 无该 token，零副作用），``--lang`` 选项本体再挂 eager 回调兜底
+     （进程内 CliRunner 路径）。``AAA_LANG`` 环境变量天然覆盖导入期（i18n.get_lang）。
+     优先级：``--lang`` > ``AAA_LANG`` > zh。E2E 以子进程冒烟（``AAA_LANG=en
+     python -m aaa.cli --help`` 与 ``--lang en <cmd> --help`` 双路径全英文断言）。
+  2) **命令帮助形态**：typer 优先用显式 ``help=`` kwarg 而非 docstring——docstring
+     是静态中文、无法走 i18n。落位：31 个命令/组装饰器全部传 ``help=t("<cmd>.doc")``
+     （多行 docstring 的补充段落补 ``<cmd>.detail`` 词条，zh 与原 docstring 逐字一致，
+     保证默认 ``--help`` 输出不变；en 提供全译文）。
+  3) **词条占位符与 t() 签名冲突**：W5 目录里 ``{key}``/``{reg_key}`` 占位符与
+     ``t(key, **fmt)`` 的形参名撞车（``t("...", key=...)`` 抛 TypeError）。落位：
+     目录侧改名 ``{item_key}``（task_created/entry_line/rule_created/err_delete/
+     rule_deleted）与 ``{reg_key}``（wizard.proxy.registry），zh/en 同步，en 译文
+     不变——集成期对波次一交付物的最小修正，test_i18n 的占位符一致性校验兜底。
+  4) **多 profile 的「current 软链/拷贝」落位**：Windows 软链需特权，取**拷贝语义**
+     ——``policy use <name>`` 校验（PolicyLoader 全量 pydantic）通过后把
+     ``profiles/<name>.yaml`` **原样文本拷贝**为 ``policies/current.yaml``
+     （保留 YAML 注释；不落 pydantic round-trip）；``config.default_policy_file()``
+     让 current.yaml 存在即成为全部命令的缺省策略，出厂 default.yaml 永不被覆盖
+     （``--reset`` 删除 current.yaml 回出厂）。``policy list`` 的"当前生效"判定 =
+     解析到的缺省文件与 profile 内容一致（换行归一后的文本比较——Windows write_text
+     的 \r\n 与 atomic_write_text 的 \n 视为同内容）。热更新 E2E 用真代理验证：
+     切换后新请求按新规则求值（切换瞬间在途请求按旧策略求值是 mtime 轮询的如实语义，
+     测试以持续流量等待生效而非假设即时）。
+  5) **sampling 两层默认（兑现 D-46 第 3 条预期）**：管线层出厂 ``SamplingConfig``
+     enabled=True（head==max 零差异）；**策略段** ``SamplingSection`` 默认
+     ``enabled=False``——老策略文件（无本段）升级后严格保持 v0.2.x 全量扫描行为
+     （用户自定义了更大 max_body_scan 时尤其重要），出厂 default.yaml 显式写
+     ``enabled: false``（任务 5 的"默认关"字面）。``aaa run`` 接线
+     ``AuditPipeline(sampling=doc.sampling.model_dump())``，启动时生效（热更新不切换，
+     与加密/judge 同口径）。
+  6) **hub 转发接线**：``AuditAddon`` 新增可选 ``forwarder`` 注入；**全部已完成事件**
+     （response/error/blocked-connect 落盘路径）入队转发——hub 是审计汇总通道而非
+     告警通道（告警阈值语义已属 notifications），HubConfig 不加阈值字段（保持 W8
+     模型不动），中心侧本就有 verdict 过滤查询与 trim 保留期。``aaa hub forward
+     status`` 是独立进程、看不见 run 进程内存计数——落位为**统计快照文件**：
+     ``_StatsDumpingForwarder(Forwarder)`` 子类在每批发送后与退出路径把 ``stats()``
+     原子写 ``data/hub-forward.json``（失败静默，观测通道不碰主路径），status 命令
+     读快照 + 打印当前生效配置（token 永不回显）。
+  7) **addon 批量落盘边界**：``--db-batch N``（默认 20，1=逐条）——缓冲攒满或
+     **重要事件**（verdict block/confirm，或 action_taken ∈ blocked-403/
+     blocked-connect/fail-open/error）立即 ``insert_events`` 单事务冲刷；缓冲先换出
+     再写入，失败不回灌（fail-open 记日志）；``done()`` 退出冲刷。batch_size=1 时
+     走原 ``append`` 路径，v0.2.x 行为逐字节一致（test_addon/test_crash_safety 等既有
+     测试零改动通过）。
+  8) **hub 包惰性导出**：policy.model 挂 ``HubConfig`` 后，``import aaa.hub.model``
+     会执行包 __init__ → collector 顶层 ``import fastapi``——基础安装（未装 web
+     extra）连 ``aaa policy lint`` 都会 ModuleNotFoundError。落位：``aaa/hub/__init__.py``
+     改 PEP 562 ``__getattr__`` 惰性导出（公开名与原 __all__ 一一对应，test_hub 的
+     子模块直导不受影响），collector/forwarder 仅在真正访问时加载。
+  9) **teardown 目标映射补齐**（D-40 第 4 条/D-45 预留）：``teardown_target_kinds``
+     新增 ``service``（KIND_SERVICE_TASK）与 ``daily``（KIND_DAILY_REPORT_TASK）；
+     延迟导入防环（service/daily 反向 import teardown 注册还原器），还原器仍由
+     各模块 import 自注册（cli 顶层已 import）。
+  10) **ruff per-file 豁免**：cli.py 的 B008（typer.Option/Argument 与 t() 均出现在
+      参数默认值位置，DSL 惯用法；此前逐处 noqa，v0.3.0 命令量大改为文件级豁免）；
+      locales/*.py 的 E501（纯数据词条行不改写不拆行，拆行会破坏"与源文件逐字一致"
+      的可核对性）。
+  11) **杂项落位**：``report --daily`` 缺省落 ``data/reports/{daily|weekly}-<日>.html``
+      （``--out`` 可覆盖；``--day`` 选项便于复现指定日）；``gitleaks sync`` 缺省落
+      ``data/rules/gitleaks.yaml``（包 meta 自带 sha256/synced_at pin）；rules
+      export/import 的目标策略缺省走 current.yaml 解析；conftest 新增 autouse
+      ``_reset_i18n_state``（语言选择是进程级状态，不隔离会泄漏到后续测试破坏既有
+      中文断言）。
+- 测试：tests/unit/test_wave2_integration.py（29 例）+ tests/e2e/
+  test_v030_experience_e2e.py（6 例）；全量套件与 ruff 结果见提交时的验收记录。
 
 

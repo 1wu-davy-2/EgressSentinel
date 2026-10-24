@@ -4,19 +4,26 @@ P4 完整化（03 文档 T4.2）：``setup``（交互向导）、``run``、``sta
 ``report``、``policy lint``、``trim``、``harden``、``teardown``、``web``。
 v0.2.0 安全深化（05 文档波次二）：``fingerprint build`` 建库、``harden on|off``
 防火墙加固（替换 P6 占位）、``run`` 启动概要含 judge/fingerprint/加密状态。
+v0.3.0 体验与生态（06 文档波次二）：``service install|uninstall|status``（W1）、
+``tray``（W2）、``report --daily|--weekly [--email]``（W6）、``rules export|import``
+与 ``gitleaks sync``（W7）、``hub serve`` / ``hub forward status``（W8）、
+``policy use|list``（多 profile）、全部文案 i18n（``--lang``/``AAA_LANG``，默认 zh
+输出不变）；``run`` 接批量落盘/扫描采样/hub 转发。
 
 安全红线：setup/teardown 命令提供 ``--dry-run``；所有系统修改动作执行前打印将要做的
-改动；全部改动 journal-first 记入 ``data/setup-state.json``；``--mode local`` 与机器级
-操作（harden）需管理员，非管理员直接拒绝。
+改动；全部改动 journal-first 记入 ``data/setup-state.json``；``--mode local``、服务
+安装与机器级操作（harden）需管理员，非管理员直接拒绝。
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +33,7 @@ from rich.live import Live
 from rich.table import Table
 
 from aaa import __version__
+from aaa import config as config_mod
 from aaa.attribution.table import ProcessAttributor, resolve_pinned_process
 from aaa.capture.addon import AuditAddon
 from aaa.capture.engine import (
@@ -35,27 +43,46 @@ from aaa.capture.engine import (
     install_shutdown_handlers,
 )
 from aaa.config import (
+    CURRENT_POLICY_FILE_NAME,
     DEFAULT_LISTEN_HOST,
     DEFAULT_LISTEN_PORT,
-    DEFAULT_POLICY_FILE,
     DEFAULT_WEB_PORT,
+    PROFILES_DIR_NAME,
     resolve_confirm_ttl,
     resolve_paths,
     resolve_retention_days,
 )
 from aaa.engine.pipeline import AuditPipeline
 from aaa.fingerprint import FINGERPRINTS_FILE_NAME, FingerprintIndex
+from aaa.hub.forwarder import Forwarder
+from aaa.hub.model import (
+    HUB_TOKEN_ENV,
+    HubConfig,
+)
+from aaa.hub.model import (
+    apply_env_overrides as apply_hub_env_overrides,
+)
+from aaa.i18n import t
 from aaa.judge import DEFAULT_JUDGE_USAGE_FILENAME, JudgeUsageStore, LLMJudge
 from aaa.notify.channels import CHANNEL_NAMES, build_channels
 from aaa.notify.dispatcher import Dispatcher, build_dispatcher, notify_config_from_policy
 from aaa.notify.model import apply_env_overrides
 from aaa.policy.loader import PolicyError, PolicyLoader
 from aaa.policy.model import PolicyDocument
+from aaa.reporting import daily as reporting_daily
+from aaa.ruleshub.gitleaks import sync_gitleaks
+from aaa.ruleshub.sections import (
+    RulesHubError,
+    atomic_write_text,
+    export_section,
+    import_section,
+)
 from aaa.setup import autostart as autostart_mod
 from aaa.setup import ca as ca_mod
 from aaa.setup import envvars as envvars_mod
 from aaa.setup import firewall as firewall_mod
 from aaa.setup import proxy as proxy_mod
+from aaa.setup import service as service_mod
 from aaa.setup import teardown as teardown_mod
 from aaa.setup import watchdog as watchdog_mod
 from aaa.setup.admin import is_current_process_elevated
@@ -69,27 +96,68 @@ from aaa.store.events import AuditEvent, Destination, RequestInfo, new_event_id
 from aaa.store.evidence import EvidenceStore
 from aaa.store.jsonl import JsonlEventStore
 
+
+def _prescan_lang(argv: list[str]) -> None:
+    """启动期预扫描 ``--lang``（06 文档波次二：帮助文本双语）。
+
+    命令注册（装饰器求值 ``t()``）发生在本模块导入期，早于任何参数解析——
+    因此在**导入期**先扫一遍真实 ``sys.argv`` 把语言设好，``aaa --lang en --help``
+    才能渲染出英文帮助。只在**子命令之前的选项区**匹配（根选项语义：
+    ``aaa --lang en <命令>``）；``AAA_LANG`` 环境变量由 i18n 自行读取，无需处理。
+    pytest 等把本模块当库导入的场景中 argv 不含 ``--lang``，此函数为零副作用。
+    """
+    for index, arg in enumerate(argv):
+        if arg == "--lang":
+            if index + 1 < len(argv):
+                i18n_set_lang(argv[index + 1])
+            return
+        if arg.startswith("--lang="):
+            i18n_set_lang(arg.split("=", 1)[1])
+            return
+        if not arg.startswith("-"):
+            return  # 已进入子命令：--lang 只能出现在其之前
+
+
+def i18n_set_lang(value: str) -> None:
+    """设定运行时语言（prescan 与 ``--lang`` 选项回调共用；未知值回落 zh）。"""
+    from aaa import i18n
+
+    i18n.set_lang(value)
+
+
+_prescan_lang(sys.argv[1:])
+
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    help="AI-AGENT-AUDIT：本机 AI Agent 外发流量审计（Windows）",
+    help=t("cli.app.help"),
 )
 setup_app = typer.Typer(
-    no_args_is_help=True, help="系统设置下发（改动全部记录到 setup-state.json）"
+    no_args_is_help=True, help=t("cli.setup.group_help")
 )
 app.add_typer(setup_app, name="setup")
-policy_app = typer.Typer(no_args_is_help=True, help="策略文件管理与校验")
+policy_app = typer.Typer(no_args_is_help=True, help=t("cli.policy.group_help"))
 app.add_typer(policy_app, name="policy")
 autostart_app = typer.Typer(
-    no_args_is_help=True, help="开机自启计划任务（aaa run + 登录自检 watchdog）"
+    no_args_is_help=True, help=t("cli.autostart.group_help")
 )
 app.add_typer(autostart_app, name="autostart")
-notify_app = typer.Typer(no_args_is_help=True, help="告警通知（toast/webhook/email，04 文档）")
+notify_app = typer.Typer(no_args_is_help=True, help=t("cli.notify.group_help"))
 app.add_typer(notify_app, name="notify")
 fingerprint_app = typer.Typer(
-    no_args_is_help=True, help="仓库指纹库（05 文档 W1：本地代码外发比对）"
+    no_args_is_help=True, help=t("cli.fingerprint.group_help")
 )
 app.add_typer(fingerprint_app, name="fingerprint")
+service_app = typer.Typer(no_args_is_help=True, help=t("cli.service.group_help"))
+app.add_typer(service_app, name="service")
+rules_app = typer.Typer(no_args_is_help=True, help=t("cli.rules.group_help"))
+app.add_typer(rules_app, name="rules")
+gitleaks_app = typer.Typer(no_args_is_help=True, help=t("cli.gitleaks.group_help"))
+app.add_typer(gitleaks_app, name="gitleaks")
+hub_app = typer.Typer(no_args_is_help=True, help=t("cli.hub.group_help"))
+app.add_typer(hub_app, name="hub")
+hub_forward_app = typer.Typer(no_args_is_help=True, help=t("cli.hub_forward.group_help"))
+hub_app.add_typer(hub_forward_app, name="forward")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -98,12 +166,18 @@ logger = logging.getLogger(__name__)
 DataDirOpt = typer.Option(
     None,
     "--data-dir",
-    help="数据目录（默认 <项目>/data；也可用环境变量 AAA_DATA_DIR）",
+    help=t("opt.data_dir.help"),
 )
-DryRunOpt = typer.Option(False, "--dry-run", help="只显示将执行的动作，不实施任何系统改动")
+DryRunOpt = typer.Option(False, "--dry-run", help=t("opt.dry_run.help"))
 
 #: Web 面板只允许本地回环（03 文档 T5.1：仅监听 127.0.0.1）
 _LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
+
+#: hub 中心默认端口（hub.collector.DEFAULT_HUB_PORT；直接引值避免顶层导入 fastapi）
+_HUB_DEFAULT_PORT = 8788
+
+#: 运行时统计快照文件名（``aaa hub forward status`` 读取；run 进程写入）
+HUB_FORWARD_STATS_FILENAME = "hub-forward.json"
 
 
 def _version_callback(value: bool) -> None:
@@ -112,10 +186,19 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
-@app.callback()
+def _lang_callback(value: str | None) -> None:
+    """``--lang`` 选项回调（eager）：运行时输出语言（帮助文本在导入期已渲染）。"""
+    if value is not None:
+        i18n_set_lang(value)
+
+
+@app.callback(help=t("cli.root.doc"))
 def _root(
     version: bool = typer.Option(
-        False, "--version", callback=_version_callback, is_eager=True, help="显示版本号"
+        False, "--version", callback=_version_callback, is_eager=True, help=t("opt.version.help")
+    ),
+    lang: str | None = typer.Option(
+        None, "--lang", callback=_lang_callback, is_eager=True, help=t("opt.lang.help")
     ),
 ) -> None:
     """AI-AGENT-AUDIT 命令行入口。"""
@@ -126,41 +209,45 @@ def _root(
 # --------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(help=t("cli.run.doc") + "\n\n" + t("cli.run.detail"))
 def run(
     mode: str = typer.Option(
         "regular",
         "--mode",
-        help=(
-            "采集模式：regular（默认，系统代理）| "
-            "local[:spec]（需管理员，见 docs/notes/local-mode-spike.md）"
-        ),
+        help=t("opt.run_mode.help"),
     ),
-    host: str = typer.Option(DEFAULT_LISTEN_HOST, "--host", help="监听地址"),
-    port: int = typer.Option(DEFAULT_LISTEN_PORT, "--port", help="监听端口"),
+    host: str = typer.Option(DEFAULT_LISTEN_HOST, "--host", help=t("opt.host.help")),
+    port: int = typer.Option(DEFAULT_LISTEN_PORT, "--port", help=t("opt.port.help")),
     pid: int | None = typer.Option(
-        None, "--pid", help="仅 local 模式：限定目标进程 PID（透传 local:pid=…）"
+        None, "--pid", help=t("opt.run_pid.help")
     ),
     process: str | None = typer.Option(
-        None, "--process", help="仅 local 模式：限定目标进程名（透传 local:process=…）"
+        None, "--process", help=t("opt.run_process.help")
     ),
     policy: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
-        None, "--policy", help="策略 YAML 文件（默认 policies/default.yaml）"
+        None, "--policy", help=t("opt.policy.help")
     ),
     data_dir: Path | None = DataDirOpt,
     jsonl: bool = typer.Option(
-        False, "--jsonl", help="同时镜像写 JSONL（data/raw/YYYYMMDD.jsonl；默认仅 SQLite）"
+        False, "--jsonl", help=t("opt.run_jsonl.help")
     ),
     retention_days: int | None = typer.Option(
         None,
         "--retention-days",
         min=0,
-        help="事件保留天数（启动自动清理；默认 14 或 AAA_RETENTION_DAYS）",
+        help=t("opt.retention_days.help"),
     ),
     log_file: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
         None,
         "--log-file",
-        help="启动/退出信息镜像写入该文件（开机自启等无控制台场景排障用）",
+        help=t("opt.run_log_file.help"),
+    ),
+    db_batch: int = typer.Option(
+        20,
+        "--db-batch",
+        min=1,
+        max=500,
+        help=t("opt.run_db_batch.help"),
     ),
 ) -> None:
     """启动采集代理（阻塞运行；Ctrl+C 优雅退出；关机/注销自动限时收尾）。
@@ -169,21 +256,16 @@ def run(
     """
     is_local = mode == "local" or mode.startswith("local:")
     if (pid is not None or process is not None) and not is_local:
-        raise typer.BadParameter("--pid/--process 仅支持 --mode local")
+        raise typer.BadParameter(t("cli.run.err_pid_not_local"))
     if pid is not None and process is not None:
-        raise typer.BadParameter("--pid 与 --process 互斥，只选其一")
+        raise typer.BadParameter(t("cli.run.err_pid_mutex"))
     mode_spec = _local_mode_spec(mode, pid, process)
     try:
         _validate_mode(mode_spec)  # 尽早校验，避免进入事件循环后才失败
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     if is_local and not is_current_process_elevated():
-        err_console.print(
-            "[red]--mode local 需要管理员权限（WinDivert 透明重定向）。[/red]\n"
-            "请以管理员身份运行 PowerShell / 终端后重试：\n"
-            "  右键开始菜单 → 终端(管理员) 或 PowerShell(管理员)\n"
-            "  然后执行：aaa run --mode local"
-        )
+        err_console.print(t("cli.run.err_local_admin"))
         raise typer.Exit(code=2)
     try:
         paths = resolve_paths(data_dir)
@@ -191,7 +273,13 @@ def run(
         policy_loader = _prepare_policy_loader(policy)
         doc = policy_loader.current
         fingerprint_index = _load_fingerprint_index(paths.data_dir, doc)
-        pipeline = AuditPipeline(policy_loader, fingerprint_index=fingerprint_index)
+        # W4 采样接线（06 文档波次二）：策略 sampling 段 → 管线构造器；
+        # 采样配置启动时生效（热更新不切换，与加密/判定同一口径，D-46）。
+        pipeline = AuditPipeline(
+            policy_loader,
+            fingerprint_index=fingerprint_index,
+            sampling=doc.sampling.model_dump(),
+        )
         pinned = resolve_pinned_process(pid, process) if is_local else None
         store = DbEventStore(paths.db_file, evidence_dir=paths.evidence_dir)
         if jsonl:
@@ -201,6 +289,12 @@ def run(
         crypto_engine = CryptoEngine(paths.data_dir, enabled=doc.encrypt.enabled)
         evidence = EvidenceStore(paths.evidence_dir, rel_base=paths.data_dir, crypto=crypto_engine)
         dispatcher = build_dispatcher(policy_loader)
+        # W8 hub 转发接线（06 文档波次二）：policy.hub 段 + AAA_HUB_* 环境变量；
+        # 默认关（零外发）；统计快照落 data/hub-forward.json 供 hub forward status 读。
+        hub_cfg = apply_hub_env_overrides(doc.hub)
+        forwarder = _build_hub_forwarder(
+            hub_cfg, stats_path=paths.data_dir / HUB_FORWARD_STATS_FILENAME
+        )
         addon = AuditAddon(
             store,
             evidence,
@@ -211,6 +305,8 @@ def run(
             decisions=DecisionStore(paths.decisions_file, default_ttl=resolve_confirm_ttl(None)),
             dispatcher=dispatcher,
             judge=_build_judge(doc, paths.data_dir),
+            forwarder=forwarder,
+            batch_size=db_batch,
         )
         engine = CaptureEngine(
             ProxyConfig(
@@ -224,35 +320,59 @@ def run(
         )
     except (ValueError, PolicyError) as exc:
         raise typer.BadParameter(str(exc)) from exc
-    console.print(f"[green]aaa {__version__}[/green] mode={mode_spec} 监听 {host}:{port}")
+    console.print(t("cli.run.banner", version=__version__, mode=mode_spec, host=host, port=port))
     console.print(
-        f"策略：{policy_loader.path}（mode={policy_loader.current.mode} "
-        f"version={policy_loader.current.policy_version}，mtime 热更新轮询 2s）"
+        t(
+            "cli.run.policy_line",
+            path=policy_loader.path,
+            mode=policy_loader.current.mode,
+            version=policy_loader.current.policy_version,
+        )
     )
     if pinned is not None:
-        console.print(f"local 目标进程：pid={pinned.pid} name={pinned.name}")
+        console.print(t("cli.run.pinned_line", pid=pinned.pid, name=pinned.name))
     console.print(
-        f"事件库：{paths.db_file}"
-        + ("  +JSONL 镜像 data/raw/" if jsonl else "")
-        + f"  证据：{paths.evidence_dir}"
+        t("cli.run.store_line", db_file=paths.db_file)
+        + (t("cli.run.jsonl_mirror") if jsonl else "")
+        + t("cli.run.evidence_dir", evidence_dir=paths.evidence_dir)
     )
     retention = resolve_retention_days(retention_days)
     trimmed = store.trim(retention)
     if trimmed["events"]:
         console.print(
-            f"启动自动清理：删除 {trimmed['events']} 条过期事件"
-            f"（保留期 {retention} 天，连带证据 {trimmed['evidence']} 个）"
+            t(
+                "cli.run.trim_line",
+                events=trimmed["events"],
+                days=retention,
+                evidence=trimmed["evidence"],
+            )
         )
     console.print(_notify_summary_line(policy_loader, dispatcher))
     # v0.2.0 安全深化概要（05 文档波次二 §5）：judge / fingerprint / 加密状态
     for line in _deepening_summary_lines(doc, fingerprint_index, crypto_engine, paths.data_dir):
         console.print(line)
-    console.print("按 Ctrl+C 优雅退出；关机/注销时自动限时收尾（不阻塞系统关机）。")
+    # v0.3.0 接线概要（06 文档波次二）：采样 / hub 转发
+    if doc.sampling.enabled:
+        console.print(t("cli.run.sampling_on", head_bytes=doc.sampling.head_bytes))
+    else:
+        console.print(t("cli.run.sampling_off"))
+    if forwarder is not None:
+        console.print(t("cli.run.hub_on", url=hub_cfg.url, batch_size=hub_cfg.batch_size))
+    else:
+        console.print(t("cli.run.hub_off"))
+    console.print(t("cli.run.hint_exit"))
     if log_file is not None:
         _append_log(
             log_file,
-            f"aaa {__version__} 启动 mode={mode_spec} listen={host}:{port} "
-            f"policy={policy_loader.path}({policy_loader.current.mode})",
+            t(
+                "cli.run.log_start",
+                version=__version__,
+                mode=mode_spec,
+                host=host,
+                port=port,
+                path=policy_loader.path,
+                policy_mode=policy_loader.current.mode,
+            ),
         )
     stop_cb = getattr(engine, "stop", None)
     if callable(stop_cb):
@@ -262,22 +382,79 @@ def run(
     finally:
         # 04 文档 §5：退出时 flush 通知（在 engine 停止后、store.close 前，有界 2s）
         dispatcher.flush(2.0)
+        if forwarder is not None:
+            try:
+                forwarder.flush(2.0)
+            finally:
+                forwarder.dump_stats()
         store.close()
         if log_file is not None:
-            _append_log(log_file, "aaa 已停止（正常退出或收到关机信号）")
+            _append_log(log_file, t("cli.run.log_stop"))
+
+
+class _StatsDumpingForwarder(Forwarder):
+    """带统计快照的 Forwarder（run 进程内装配）：每次发送结果后写
+    ``data/hub-forward.json``（tmp+replace），供 ``aaa hub forward status``
+    跨进程读取。写失败只记 debug 日志——统计是观测通道，绝不影响转发。"""
+
+    def __init__(self, *args: Any, stats_path: Path, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._stats_path = stats_path
+
+    def _send_batch(self, events: list[AuditEvent]) -> None:
+        try:
+            super()._send_batch(events)
+        finally:
+            self.dump_stats()
+
+    def dump_stats(self) -> None:
+        """把当前统计快照原子落盘（退出路径/每批发送后调用；失败静默）。"""
+        try:
+            self._stats_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = json.dumps(
+                {"updated": _now_iso_ms(), "stats": self.stats()}, ensure_ascii=False
+            )
+            tmp = self._stats_path.with_name(self._stats_path.name + ".tmp")
+            tmp.write_text(payload, encoding="utf-8")
+            tmp.replace(self._stats_path)
+        except OSError:
+            logger.debug("hub 统计快照写入失败（忽略）：%s", self._stats_path, exc_info=True)
+
+
+def _build_hub_forwarder(config: HubConfig, *, stats_path: Path) -> Forwarder | None:
+    """按（已应用环境变量覆盖的）配置构造带统计快照的 Forwarder。
+
+    与 ``hub.forwarder.build_forwarder`` 同一守卫（默认关；url/token 不全告警不转发）；
+    换用子类以获得统计快照落盘能力（``hub forward status`` 的数据来源）。
+    """
+    if not config.enabled:
+        return None
+    if not config.url or not config.token:
+        logger.warning("hub 已启用但 url/token 不完整（可设 AAA_HUB_URL/AAA_HUB_TOKEN），不转发")
+        return None
+    return _StatsDumpingForwarder(
+        config.url,
+        config.token,
+        batch_size=config.batch_size,
+        timeout=config.timeout,
+        stats_path=stats_path,
+    )
 
 
 def _notify_summary_line(policy_loader: PolicyLoader, dispatcher: Dispatcher) -> str:
     """启动概要的通知行（04 文档 §5：启动打印通知通道概要）。"""
     config = notify_config_from_policy(policy_loader)
     channels = config.enabled_channel_names()
-    enabled = ", ".join(channels) if channels else "全部关闭"
+    enabled = ", ".join(channels) if channels else t("common.notify_none")
     extra = ""
     if config.webhook.enabled and config.webhook.url:
-        extra = f"（provider={config.webhook.provider}）"
-    return (
-        f"通知：{enabled}{extra}；门槛 min_action={config.min_action}；"
-        f"限流 {config.rate_limit.max_per_minute} 条/分钟（超出合并为 digest）"
+        extra = t("cli.run.notify_provider", provider=config.webhook.provider)
+    return t(
+        "cli.run.notify_line",
+        enabled=enabled,
+        extra=extra,
+        min_action=config.min_action,
+        max_per_minute=config.rate_limit.max_per_minute,
     )
 
 
@@ -319,33 +496,37 @@ def _deepening_summary_lines(
     lines: list[str] = []
     if doc.fingerprint.enabled:
         if fingerprint_index is None:
-            lines.append(
-                "[yellow]指纹比对：已启用但指纹库缺失/损坏——运行 "
-                "aaa fingerprint build 构建后重启生效[/yellow]"
-            )
+            lines.append(t("cli.run.fp_missing"))
         else:
             lines.append(
-                f"指纹比对：开启（{len(fingerprint_index.repos)} 仓库 "
-                f"{fingerprint_index.total_slices} 片 → data/{FINGERPRINTS_FILE_NAME}）"
+                t(
+                    "cli.run.fp_on",
+                    repos=len(fingerprint_index.repos),
+                    slices=fingerprint_index.total_slices,
+                    file_name=FINGERPRINTS_FILE_NAME,
+                )
             )
     else:
-        lines.append("指纹比对：关闭（policy.fingerprint.enabled）")
+        lines.append(t("cli.run.fp_off"))
     if doc.judge.enabled:
         used = JudgeUsageStore(data_dir / DEFAULT_JUDGE_USAGE_FILENAME).today_count()
         lines.append(
-            f"LLM 判定：开启（model={doc.judge.model or '-'}，"
-            f"今日已用 {used}/{doc.judge.max_events_per_day}；key=环境变量只读不落盘）"
+            t(
+                "cli.run.judge_on",
+                model=doc.judge.model or "-",
+                used=used,
+                max_per_day=doc.judge.max_events_per_day,
+            )
         )
     else:
-        lines.append("LLM 判定：关闭（policy.judge.enabled）")
+        lines.append(t("cli.run.judge_off"))
     if crypto_engine.enabled:
         describe = crypto_engine.describe()
         lines.append(
-            f"证据加密：开启（{describe['algorithm']}，keyfile={describe['keyfile']}；"
-            "密钥首次写入后生成）"
+            t("cli.run.crypto_on", algorithm=describe["algorithm"], keyfile=describe["keyfile"])
         )
     else:
-        lines.append("证据加密：关闭（policy.encrypt.enabled；读取仍兼容历史密文）")
+        lines.append(t("cli.run.crypto_off"))
     return lines
 
 
@@ -382,8 +563,12 @@ def _local_mode_spec(mode: str, pid: int | None, process: str | None) -> str:
 
 
 def _prepare_policy_loader(policy: Path | None) -> PolicyLoader:
-    """解析策略文件路径并预加载（坏文件在启动期报错，不进引擎）。"""
-    path = policy or DEFAULT_POLICY_FILE
+    """解析策略文件路径并预加载（坏文件在启动期报错，不进引擎）。
+
+    缺省路径为当前生效策略：``policies/current.yaml``（``aaa policy use`` 产物）
+    优先，否则出厂 ``policies/default.yaml``（06 文档波次二多 profile）。
+    """
+    path = policy or config_mod.default_policy_file()
     loader = PolicyLoader(path)
     loader.load()  # 校验失败抛 PolicyError → CLI 报错退出
     return loader
@@ -394,14 +579,14 @@ def _prepare_policy_loader(policy: Path | None) -> PolicyLoader:
 # --------------------------------------------------------------------------
 
 
-@setup_app.callback(invoke_without_command=True)
+@setup_app.callback(invoke_without_command=True, help=t("cli.setup.doc"))
 def setup(
     ctx: typer.Context,
     data_dir: Path | None = DataDirOpt,
     dry_run: bool = DryRunOpt,
-    yes: bool = typer.Option(False, "--yes", "-y", help="跳过逐步确认（自动化用）"),
+    yes: bool = typer.Option(False, "--yes", "-y", help=t("opt.setup_yes.help")),
     machine_ca: bool = typer.Option(
-        False, "--machine-ca", help="CA 安装到 LocalMachine（需管理员；默认 CurrentUser）"
+        False, "--machine-ca", help=t("opt.machine_ca.help")
     ),
     proxy_host: str = typer.Option(DEFAULT_LISTEN_HOST, "--proxy-host"),
     proxy_port: int = typer.Option(DEFAULT_LISTEN_PORT, "--proxy-port"),
@@ -419,59 +604,58 @@ def setup(
         # 用户需求：setup 默认附带开机自启（可拒绝；改动同样 journal-first）。
         # 全部步骤都被拒绝时不追问（保持「零改动」语义）。
         task_name = autostart_mod.AUTOSTART_TASK_NAME
-        if confirm(f"安装开机自启与看门狗计划任务（{task_name} 等 2 项）？"):
+        if confirm(t("cli.setup.ask_autostart", task_name=task_name)):
             state = StateFile(paths.setup_state_file)
             try:
                 entries = autostart_mod.enable_autostart(state, paths.data_dir)
             except autostart_mod.AutostartError as exc:
-                hint = "可稍后 aaa autostart on 重试"
-                err_console.print(f"[red]自启任务创建失败：{exc}[/red]（{hint}）")
+                hint = t("cli.setup.hint_autostart_retry")
+                err_console.print(t("cli.setup.err_autostart", exc=exc, hint=hint))
             else:
                 for entry in entries:
-                    console.print(f"[green]已创建计划任务[/green] {entry.key}")
+                    console.print(t("common.task_created", item_key=entry.key))
         # 安装即守护：全部监控默认开启，setup 末步默认立即后台启动审计代理
-        if confirm("立即启动审计代理（后台常驻；aaa status 查看 / aaa teardown 停止）？"):
+        if confirm(t("cli.setup.ask_spawn")):
             try:
                 proc = autostart_mod.spawn_run_now(paths.data_dir)
             except OSError as exc:
                 hint = "aaa run"
-                err_console.print(f"[red]后台启动失败：{exc}[/red]（可手动前台运行 {hint}）")
+                err_console.print(t("cli.setup.err_spawn", exc=exc, hint=hint))
             else:
-                console.print(
-                    f"[green]审计代理已后台启动[/green] pid={proc.pid}"
-                    "（五维规则全量监控中；日志 data/autostart.log）"
-                )
+                console.print(t("cli.setup.spawned", pid=proc.pid))
 
 
-@setup_app.command("ca")
+@setup_app.command("ca", help=t("cli.setup_ca.doc"))
 def setup_ca(
     store: str = typer.Option(
         "user",
         "--store",
-        help="证书存储：user（CurrentUser，无需管理员）| machine（LocalMachine，需管理员）",
+        help=t("opt.ca_store.help"),
     ),
     data_dir: Path | None = DataDirOpt,
     dry_run: bool = DryRunOpt,
 ) -> None:
     """生成（如缺失）并安装 mitmproxy CA 到证书存储。"""
     if store not in ("user", "machine"):
-        raise typer.BadParameter("--store 只支持 user|machine")
+        raise typer.BadParameter(t("cli.setup_ca.err_store"))
     paths = resolve_paths(data_dir)
     info = ca_mod.ensure_ca(paths.confdir)
     console.print(
-        f"CA：{info.path}\n序列号：{info.serial}  指纹(SHA1)：{info.thumbprint}\n"
-        f"主题：{info.subject_cn}"
+        t(
+            "cli.setup_ca.ca_info",
+            path=info.path,
+            serial=info.serial,
+            thumbprint=info.thumbprint,
+            subject_cn=info.subject_cn,
+        )
     )
     # 执行前打印将要做的改动（工作约定：所有系统修改动作前必打印）
-    console.print(f"将执行：安装该 CA 到 {store} 证书存储，并记录到 setup-state.json。")
+    console.print(t("cli.setup_ca.will_do", store=store))
     if dry_run:
-        console.print(f"[yellow](dry-run)[/yellow] 将安装到 {store} 证书存储，未实施。")
+        console.print(t("cli.setup_ca.dry_run", store=store))
         return
     if store == "machine" and not is_current_process_elevated():
-        err_console.print(
-            "[red]--store machine 需要管理员权限。[/red] "
-            "请以管理员身份运行终端后重试，或使用 --store user（CurrentUser，无需管理员）。"
-        )
+        err_console.print(t("cli.setup_ca.err_machine_admin"))
         raise typer.Exit(code=2)
     state = StateFile(paths.setup_state_file)
     # journal-first：先记录（含序列号），再实施；失败保留记录供 teardown
@@ -484,26 +668,26 @@ def setup_ca(
     try:
         ca_mod.install_cert(store, info.path)
     except ca_mod.SetupError as exc:
-        err_console.print(f"[red]{exc}[/red]")
+        err_console.print(t("common.err_plain", exc=exc))
         raise typer.Exit(code=1) from exc
-    console.print(f"[green]已安装到 {store} 证书存储[/green]（teardown 可按序列号精确删除）。")
+    console.print(t("cli.setup_ca.installed", store=store))
 
 
-@setup_app.command("proxy")
+@setup_app.command("proxy", help=t("cli.setup_proxy.doc"))
 def setup_proxy(
     host: str = typer.Option(DEFAULT_LISTEN_HOST, "--host"),
     port: int = typer.Option(DEFAULT_LISTEN_PORT, "--port"),
-    winhttp: bool = typer.Option(False, "--winhttp", help="同时设置 WinHTTP 机器代理（需管理员）"),
+    winhttp: bool = typer.Option(False, "--winhttp", help=t("opt.winhttp.help")),
     data_dir: Path | None = DataDirOpt,
     dry_run: bool = DryRunOpt,
 ) -> None:
     """设置 WinINET 用户代理（可选 WinHTTP）。"""
     paths = resolve_paths(data_dir)
-    console.print(f"将设置 WinINET 用户代理 {host}:{port}（override=<local>;localhost;127.0.0.1）")
+    console.print(t("cli.setup_proxy.will_do", host=host, port=port))
     if winhttp:
-        console.print(f"将设置 WinHTTP 机器代理 {host}:{port}（需管理员）")
+        console.print(t("cli.setup_proxy.will_do_winhttp", host=host, port=port))
     if dry_run:
-        console.print("[yellow](dry-run)[/yellow] 未实施。")
+        console.print(t("common.dry_run_noop"))
         return
     state = StateFile(paths.setup_state_file)
     try:
@@ -511,12 +695,12 @@ def setup_proxy(
         if winhttp:
             proxy_mod.apply_winhttp_proxy(state, host, port)
     except Exception as exc:  # noqa: BLE001 - CLI 边界统一兜底
-        err_console.print(f"[red]{exc}[/red]")
+        err_console.print(t("common.err_plain", exc=exc))
         raise typer.Exit(code=1) from exc
-    console.print("[green]代理设置完成[/green]；浏览器建议重启后生效。")
+    console.print(t("cli.setup_proxy.done"))
 
 
-@setup_app.command("env")
+@setup_app.command("env", help=t("cli.setup_env.doc"))
 def setup_env(
     host: str = typer.Option(DEFAULT_LISTEN_HOST, "--host"),
     port: int = typer.Option(DEFAULT_LISTEN_PORT, "--port"),
@@ -528,14 +712,14 @@ def setup_env(
     ca_info = ca_mod.ensure_ca(paths.confdir)
     merged = paths.data_dir / ca_mod.MERGED_PEM_NAME
     values = envvars_mod.build_env_values(host, port, ca_info.path, merged)
-    table = Table(title="将下发的用户环境变量")
-    table.add_column("变量")
-    table.add_column("值")
+    table = Table(title=t("cli.setup_env.table_title"))
+    table.add_column(t("cli.setup_env.col_name"))
+    table.add_column(t("cli.col_value"))
     for name in sorted(values):
         table.add_row(name, values[name])
     console.print(table)
     if dry_run:
-        console.print("[yellow](dry-run)[/yellow] 未实施。")
+        console.print(t("common.dry_run_noop"))
         return
     state = StateFile(paths.setup_state_file)
     merged_path = ca_mod.ensure_merged_pem(paths.confdir, merged)
@@ -543,15 +727,15 @@ def setup_env(
     try:
         envvars_mod.apply_user_envvars(state, values)
     except envvars_mod.EnvVarSetupError as exc:
-        err_console.print(f"[red]{exc}[/red]")
+        err_console.print(t("common.err_plain", exc=exc))
         raise typer.Exit(code=1) from exc
-    console.print("[green]环境变量已下发[/green]；新开的终端/应用生效。")
+    console.print(t("cli.setup_env.done"))
 
 
-@app.command()
+@app.command(help=t("cli.teardown.doc"))
 def teardown(
     targets: list[str] | None = typer.Argument(  # noqa: B008 - typer 惯用法
-        None, help="限定范围：ca | proxy | env | autostart | firewall（可多选）；缺省=全部"
+        None, help=t("opt.teardown_targets.help")
     ),
     data_dir: Path | None = DataDirOpt,
     dry_run: bool = DryRunOpt,
@@ -564,25 +748,27 @@ def teardown(
         raise typer.BadParameter(str(exc)) from exc
     entries = StateFile(paths.setup_state_file).entries()
     if not entries:
-        console.print("状态文件为空：没有需要还原的改动。")
+        console.print(t("cli.teardown.empty"))
         return
     # 执行前打印将要做的改动（工作约定；也是 T4.3 崩溃还原的可视确认）
-    console.print(f"将按状态文件逆序还原 {len(entries)} 项改动：")
+    console.print(t("cli.teardown.will_restore", count=len(entries)))
     for entry in reversed(entries):
         if kinds is not None and entry.kind not in kinds:
             continue
-        console.print(f"  - {entry.kind}:{entry.key}（{entry.ts}）")
+        console.print(
+            t("cli.teardown.entry_line", kind=entry.kind, item_key=entry.key, ts=entry.ts)
+        )
     report = teardown_mod.run_teardown(paths.setup_state_file, kinds=kinds, dry_run=dry_run)
     for item in report.restored:
-        console.print(f"[green]已还原[/green] {item}")
+        console.print(t("cli.teardown.restored", item=item))
     for error in report.errors:
-        (err_console if not dry_run else console).print(f"[red]{error}[/red]")
+        (err_console if not dry_run else console).print(t("common.err_plain", exc=error))
     if dry_run:
-        console.print("[yellow](dry-run)[/yellow] 未实施。")
+        console.print(t("common.dry_run_noop"))
     elif report.ok:
-        console.print("[green]teardown 完成：全部改动已还原。[/green]")
+        console.print(t("cli.teardown.done"))
     else:
-        err_console.print("[red]teardown 存在失败项，记录已保留，可重跑 aaa teardown 重试。[/red]")
+        err_console.print(t("cli.teardown.failed"))
         raise typer.Exit(code=1)
 
 
@@ -591,66 +777,81 @@ def teardown(
 # --------------------------------------------------------------------------
 
 
-@autostart_app.command("on")
+@autostart_app.command("on", help=t("cli.autostart_on.doc"))
 def autostart_on(
     data_dir: Path | None = DataDirOpt,
-    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认（自动化用）"),
+    yes: bool = typer.Option(False, "--yes", "-y", help=t("opt.yes.help")),
 ) -> None:
     """创建两个登录计划任务：aaa run 常驻 + watchdog 自检（--fix 断网自动还原）。"""
     paths = resolve_paths(data_dir)
     cmd, args = autostart_mod.autostart_command(paths.data_dir)
     wcmd, wargs = autostart_mod.watchdog_command(paths.data_dir)
-    console.print("将创建 2 个当前用户级计划任务（登录时触发，改动记入 setup-state.json）：")
-    console.print(f"  1) {autostart_mod.AUTOSTART_TASK_NAME}：{cmd} {' '.join(args)}")
+    console.print(t("cli.autostart_on.will_create"))
     console.print(
-        f"  2) {autostart_mod.WATCHDOG_TASK_NAME}（延迟 {autostart_mod.WATCHDOG_DELAY_SECONDS}s）："
-        f"{wcmd} {' '.join(wargs)}"
+        t(
+            "cli.autostart_on.task1",
+            name=autostart_mod.AUTOSTART_TASK_NAME,
+            cmd=cmd,
+            args=" ".join(args),
+        )
     )
-    if not yes and not typer.confirm("确认创建？", default=True):
-        console.print("已取消。")
+    console.print(
+        t(
+            "cli.autostart_on.task2",
+            name=autostart_mod.WATCHDOG_TASK_NAME,
+            delay=autostart_mod.WATCHDOG_DELAY_SECONDS,
+            cmd=wcmd,
+            args=" ".join(wargs),
+        )
+    )
+    if not yes and not typer.confirm(t("cli.autostart_on.confirm"), default=True):
+        console.print(t("common.cancelled"))
         raise typer.Exit()
     state = StateFile(paths.setup_state_file)
     try:
         entries = autostart_mod.enable_autostart(state, paths.data_dir)
     except autostart_mod.AutostartError as exc:
-        err_console.print(f"[red]{exc}[/red]")
+        err_console.print(t("common.err_plain", exc=exc))
         raise typer.Exit(code=1) from exc
     for entry in entries:
-        console.print(f"[green]已创建计划任务[/green] {entry.key}")
-    console.print(
-        "效果：开机自动起代理；若自启失败/进程被杀，登录 30s 后 watchdog 自动还原代理设置，"
-        "避免「开机断网」。"
-    )
+        console.print(t("common.task_created", item_key=entry.key))
+    console.print(t("cli.autostart_on.effect"))
 
 
-@autostart_app.command("off")
+@autostart_app.command("off", help=t("cli.autostart_off.doc"))
 def autostart_off(data_dir: Path | None = DataDirOpt) -> None:
     """删除自启与看门狗计划任务（幂等；不影响其余 setup 改动）。"""
     paths = resolve_paths(data_dir)
     removed = autostart_mod.disable_autostart(StateFile(paths.setup_state_file))
-    label = ", ".join(removed) if removed else "（本来就不存在）"
-    console.print(f"[green]已删除计划任务并清理记录[/green]：{label}")
+    label = ", ".join(removed) if removed else t("cli.autostart_off.label_none")
+    console.print(t("cli.autostart_off.removed", label=label))
 
 
-@autostart_app.command("status")
+@autostart_app.command("status", help=t("cli.autostart_status.doc"))
 def autostart_status() -> None:
     """查看自启/看门狗计划任务是否已安装。"""
     for name in (autostart_mod.AUTOSTART_TASK_NAME, autostart_mod.WATCHDOG_TASK_NAME):
         installed = autostart_mod.task_exists(name)
-        console.print(f"{name}：{'已安装' if installed else '未安装'}")
+        console.print(
+            t(
+                "cli.autostart_status.line",
+                name=name,
+                state=t("common.state_installed") if installed else t("common.state_not_installed"),
+            )
+        )
 
 
-@app.command()
+@app.command(help=t("cli.watchdog.doc"))
 def watchdog(
     fix: bool = typer.Option(
-        False, "--fix", help="断网态自动还原代理设置与代理环境变量（CA 无害保留）"
+        False, "--fix", help=t("opt.watchdog_fix.help")
     ),
     wait: float = typer.Option(
-        20.0, "--wait", min=0.0, help="端口有界等待秒数（登录竞态保护）"
+        20.0, "--wait", min=0.0, help=t("opt.watchdog_wait.help")
     ),
     data_dir: Path | None = DataDirOpt,
     log_file: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
-        None, "--log-file", help="自检日志文件（默认 data/watchdog.log）"
+        None, "--log-file", help=t("opt.watchdog_log.help")
     ),
 ) -> None:
     """开机自检：检测「系统代理已启用但本机代理端口不可达」的断网态（--fix 自动还原）。"""
@@ -664,9 +865,11 @@ def watchdog(
     style = {"idle": "dim", "ok": "green", "degraded": "bold red", "recovered": "yellow"}[
         report.status
     ]
-    console.print(f"[{style}]自检：{report.status}[/{style}]  {report.detail}")
+    console.print(
+        t("cli.watchdog.status_line", style=style, status=report.status, detail=report.detail)
+    )
     for action in report.actions:
-        console.print(f"  - 已还原 {action}")
+        console.print(t("cli.watchdog.restored", action=action))
     if report.status == "degraded":
         raise typer.Exit(code=1)  # 供计划任务/脚本感知断网态
 
@@ -698,22 +901,17 @@ def _now_iso_ms() -> str:
 def _test_summary_text(channel_name: str) -> str:
     from aaa.notify.summary import SUMMARY_MAX_CHARS
 
-    ts = _now_iso_ms()
-    return (
-        "这是一条测试通知（aaa notify test）。\n"
-        f"通道 {channel_name} 工作正常；此后 block/alert 命中事件的摘要会经此送达。\n"
-        f"发送时间：{ts}"
-    )[:SUMMARY_MAX_CHARS]
+    return t("cli.notify_test.summary", channel=channel_name, ts=_now_iso_ms())[:SUMMARY_MAX_CHARS]
 
 
-@notify_app.command("test")
+@notify_app.command("test", help=t("cli.notify_test.doc") + "\n\n" + t("cli.notify_test.detail"))
 def notify_test(
     channel: str | None = typer.Option(  # noqa: B008 - typer 惯用法
-        None, "--channel", help="toast | webhook | email（缺省=策略启用的全部通道）"
+        None, "--channel", help=t("opt.notify_channel.help")
     ),
     data_dir: Path | None = DataDirOpt,
     policy: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
-        None, "--policy", help="策略 YAML 文件（默认 policies/default.yaml）"
+        None, "--policy", help=t("opt.policy.help")
     ),
 ) -> None:
     """发送一条测试通知（走真实通道，用户显式触发；04 文档 §5 T6）。
@@ -721,21 +919,19 @@ def notify_test(
     webhook/email 的实际送达取决于外部服务，失败会如实以非零退出码报告。
     """
     if channel is not None and channel not in CHANNEL_NAMES:
-        raise typer.BadParameter(f"--channel 只支持 {'|'.join(CHANNEL_NAMES)}，收到 {channel!r}")
+        raise typer.BadParameter(
+            t("cli.notify_test.err_channel", names="|".join(CHANNEL_NAMES), channel=channel)
+        )
     try:
-        loader = PolicyLoader(policy or DEFAULT_POLICY_FILE)
+        loader = PolicyLoader(policy or config_mod.default_policy_file())
         loader.load()
     except PolicyError as exc:
-        err_console.print(f"[red]策略加载失败：{exc}[/red]")
+        err_console.print(t("common.policy_load_failed", exc=exc))
         raise typer.Exit(code=1) from exc
     config = notify_config_from_policy(loader)
     names = [channel] if channel is not None else config.enabled_channel_names()
     if not names:
-        err_console.print(
-            "[yellow]当前策略未启用任何通知通道。[/yellow]\n"
-            "在策略 YAML 的 notifications 段启用（toast/webhook/email），"
-            "或设置 AAA_WEBHOOK_URL 快速试用 webhook。"
-        )
+        err_console.print(t("cli.notify_test.err_no_channels"))
         raise typer.Exit(code=1)
     built = {ch.name: ch for ch in build_channels(config)}
     event = _build_test_event()
@@ -743,26 +939,22 @@ def notify_test(
     for name in names:
         target = built.get(name)
         if target is None:
-            err_console.print(
-                f"[red]通道 {name} 未启用或配置不完整。[/red]webhook 需 "
-                "notifications.webhook.enabled: true 且 url 非空（或设 AAA_WEBHOOK_URL）；"
-                "email 需 smtp_host 与 to_addrs。"
-            )
+            err_console.print(t("cli.notify_test.err_channel_config", name=name))
             failed = True
             continue
         try:
             target.send_checked(_test_summary_text(name), event)
         except Exception as exc:  # noqa: BLE001 - CLI 边界如实报告失败
-            err_console.print(f"[red]{name} 发送失败：{exc}[/red]")
+            err_console.print(t("cli.notify_test.err_send", name=name, exc=exc))
             failed = True
         else:
-            console.print(f"[green]{name} 测试通知已发送[/green]")
+            console.print(t("cli.notify_test.sent", name=name))
     if failed:
         raise typer.Exit(code=1)
 
 
 # --------------------------------------------------------------------------
-# status / tail / report / trim（03 文档 T4.2）
+# status / tail / report / trim（03 文档 T4.2；06 波次二：report --daily/--weekly）
 # --------------------------------------------------------------------------
 
 
@@ -770,46 +962,56 @@ def _open_store(paths: Any) -> DbEventStore:
     return DbEventStore(paths.db_file, evidence_dir=paths.evidence_dir)
 
 
-@app.command()
+@app.command(help=t("cli.status.doc"))
 def status(
     data_dir: Path | None = DataDirOpt,
     policy: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
-        None, "--policy", help="策略 YAML 文件（默认 policies/default.yaml）"
+        None, "--policy", help=t("opt.policy.help")
     ),
 ) -> None:
     """当前状态：代理 / CA / 防火墙 / 策略版本 / 最近 5 事件 / 待还原改动。"""
     paths = resolve_paths(data_dir)
-    table = Table(title=f"aaa {__version__} 状态（数据目录 {paths.data_dir}）")
-    table.add_column("项", style="cyan", no_wrap=True)
-    table.add_column("值")
+    table = Table(title=t("cli.status.table_title", version=__version__, data_dir=paths.data_dir))
+    table.add_column(t("cli.col_item"), style="cyan", no_wrap=True)
+    table.add_column(t("cli.col_value"))
 
     # —— 代理 ——
     try:
         wininet = proxy_mod.read_wininet()
         enabled = wininet.get("ProxyEnable")
         server = wininet.get("ProxyServer")
-        proxy_desc = f"已启用 {server}" if enabled == 1 else f"未启用（server={server!r}）"
+        proxy_desc = (
+            t("cli.status.proxy_on", server=server)
+            if enabled == 1
+            else t("cli.status.proxy_off", server=server)
+        )
     except Exception as exc:  # noqa: BLE001 - 状态命令不因读失败中断
-        proxy_desc = f"读取失败：{exc}"
+        proxy_desc = t("common.read_failed", exc=exc)
     try:
         winhttp = proxy_mod.read_winhttp()
-        winhttp_desc = "直连" if winhttp.get("direct") else f"server={winhttp.get('server')}"
+        winhttp_desc = (
+            t("cli.status.winhttp_direct")
+            if winhttp.get("direct")
+            else t("cli.status.winhttp_server", server=winhttp.get("server"))
+        )
     except Exception as exc:  # noqa: BLE001
-        winhttp_desc = f"读取失败：{exc}"
-    table.add_row("代理 WinINET（用户）", proxy_desc)
-    table.add_row("代理 WinHTTP（机器）", winhttp_desc)
+        winhttp_desc = t("common.read_failed", exc=exc)
+    table.add_row(t("cli.status.row_proxy_wininet"), proxy_desc)
+    table.add_row(t("cli.status.row_proxy_winhttp"), winhttp_desc)
 
     # —— CA ——
     try:
         pem = paths.confdir / ca_mod.CA_CERT_PEM_NAME
         if pem.exists():
             info = ca_mod.load_ca_info(pem)
-            ca_desc = f"{info.subject_cn} serial={info.serial}（{pem}）"
+            ca_desc = t(
+                "cli.status.ca_desc", subject_cn=info.subject_cn, serial=info.serial, pem=pem
+            )
         else:
-            ca_desc = "尚未生成（aaa setup ca）"
+            ca_desc = t("cli.status.ca_missing")
     except Exception as exc:  # noqa: BLE001
-        ca_desc = f"读取失败：{exc}"
-    table.add_row("CA（confdir）", ca_desc)
+        ca_desc = t("common.read_failed", exc=exc)
+    table.add_row(t("cli.status.row_ca"), ca_desc)
 
     # —— 防火墙加固（v0.2.0 实装，05 文档波次二）——
     try:
@@ -819,42 +1021,46 @@ def status(
             if e.kind == firewall_mod.KIND_FIREWALL_RULE
         ]
         if fw_entries:
-            harden_desc = (
-                f"已加固 {len(fw_entries)} 条规则（aaa harden off / teardown firewall 还原）"
-            )
+            harden_desc = t("cli.status.harden_on", count=len(fw_entries))
         else:
-            harden_desc = "未启用（aaa harden on，需管理员）"
+            harden_desc = t("cli.status.harden_off")
     except Exception as exc:  # noqa: BLE001 - 状态命令不因读失败中断
-        harden_desc = f"读取失败：{exc}"
-    table.add_row("防火墙加固（harden）", harden_desc)
+        harden_desc = t("common.read_failed", exc=exc)
+    table.add_row(t("cli.status.row_harden"), harden_desc)
 
     # —— 策略 ——
     notify_desc = "-"
     deepening_desc = "-"
     try:
-        doc = PolicyLoader(policy or DEFAULT_POLICY_FILE).load()
-        policy_desc = f"mode={doc.mode} version={doc.policy_version}"
+        doc = PolicyLoader(policy or config_mod.default_policy_file()).load()
+        policy_desc = t(
+            "cli.status.policy_desc", mode=doc.mode, version=doc.policy_version
+        )
         # 通知配置概要（04 文档 T6；不含 url/密码——webhook url 内嵌 token 属凭据）
         notify_cfg = apply_env_overrides(doc.notifications)
-        enabled = ", ".join(notify_cfg.enabled_channel_names()) or "全部关闭"
-        notify_desc = (
-            f"{enabled}；门槛 min_action={notify_cfg.min_action}；"
-            f"限流 {notify_cfg.rate_limit.max_per_minute} 条/分钟"
+        enabled = ", ".join(notify_cfg.enabled_channel_names()) or t("common.notify_none")
+        notify_desc = t(
+            "cli.status.notify_desc",
+            enabled=enabled,
+            min_action=notify_cfg.min_action,
+            max_per_minute=notify_cfg.rate_limit.max_per_minute,
         )
         if notify_cfg.webhook.enabled:
-            notify_desc += f"；webhook provider={notify_cfg.webhook.provider}"
+            notify_desc += t("cli.status.notify_webhook", provider=notify_cfg.webhook.provider)
         # 安全深化概要（05 文档波次二；只报开/关，不展开密钥与仓库内容）
-        deepening_desc = (
-            f"指纹={'开' if doc.fingerprint.enabled else '关'}；"
-            f"judge={'开' if doc.judge.enabled else '关'}；"
-            f"响应标注={'开' if doc.response.rules else '关'}；"
-            f"证据加密={'开' if doc.encrypt.enabled else '关'}"
+        deepening_desc = t("common.deepening_join").join(
+            (
+                t("cli.status.fp_on" if doc.fingerprint.enabled else "cli.status.fp_off"),
+                t("cli.status.judge_on" if doc.judge.enabled else "cli.status.judge_off"),
+                t("cli.status.response_on" if doc.response.rules else "cli.status.response_off"),
+                t("cli.status.crypto_on" if doc.encrypt.enabled else "cli.status.crypto_off"),
+            )
         )
     except PolicyError as exc:
-        policy_desc = f"策略加载失败：{exc}"
-    table.add_row("策略", policy_desc)
-    table.add_row("通知", notify_desc)
-    table.add_row("安全深化", deepening_desc)
+        policy_desc = t("common.policy_load_failed", exc=exc)
+    table.add_row(t("cli.status.row_policy"), policy_desc)
+    table.add_row(t("cli.status.row_notify"), notify_desc)
+    table.add_row(t("cli.status.row_deepening"), deepening_desc)
 
     # —— 事件库 ——
     try:
@@ -862,14 +1068,18 @@ def status(
         try:
             stats = store.stats()
             table.add_row(
-                "事件库",
-                f"{store.count()} 条（confirm 待决策 {stats['pending_confirm']}；"
-                f"库 {paths.db_file}）",
+                t("cli.status.row_events"),
+                t(
+                    "cli.status.events_desc",
+                    count=store.count(),
+                    pending_confirm=stats["pending_confirm"],
+                    db_file=paths.db_file,
+                ),
             )
         finally:
             store.close()
     except Exception as exc:  # noqa: BLE001
-        table.add_row("事件库", f"打开失败：{exc}")
+        table.add_row(t("cli.status.row_events"), t("cli.status.open_failed", exc=exc))
 
     console.print(table)
 
@@ -883,8 +1093,17 @@ def status(
     except Exception:  # noqa: BLE001
         recent = []
     if recent:
-        ev_table = Table(title="最近 5 条事件")
-        for col in ("ID", "时间", "判定", "风险", "方法", "路径", "主机", "进程"):
+        ev_table = Table(title=t("cli.status.recent_title"))
+        for col in (
+            t("cli.col_id"),
+            t("cli.col_time"),
+            t("cli.col_verdict"),
+            t("cli.col_risk"),
+            t("cli.col_method"),
+            t("cli.col_path"),
+            t("cli.col_host"),
+            t("cli.col_process"),
+        ):
             ev_table.add_column(col)
         for event in recent:
             ev_table.add_row(
@@ -899,15 +1118,12 @@ def status(
             )
         console.print(ev_table)
     else:
-        console.print("(暂无事件)")
+        console.print(t("cli.status.no_events"))
 
     # —— 待还原改动（R7 崩溃残留提示）——
     entries = StateFile(paths.setup_state_file).entries()
     if entries:
-        console.print(
-            f"[yellow]注意：状态文件有 {len(entries)} 项未还原改动（崩溃残留或未 teardown），"
-            f"运行 aaa teardown 还原。[/yellow]"
-        )
+        console.print(t("cli.status.pending_restore", count=len(entries)))
 
     # —— 开机自检（v0.1.1：代理已启用但端口不可达 = 断网态预警）——
     try:
@@ -918,20 +1134,29 @@ def status(
             log_path=paths.data_dir / "watchdog.log",
         )
         if self_check.status == "degraded":
-            console.print(
-                "[bold red]自检异常：系统代理仍启用但代理端口不可达（应用会『断网』）。"
-                "恢复：aaa watchdog --fix / aaa teardown proxy / 重新 aaa run[/bold red]"
-            )
+            console.print(t("cli.status.degraded"))
     except Exception as exc:  # noqa: BLE001 - 状态命令不因自检失败中断
-        console.print(f"(自检跳过：{exc})")
+        console.print(t("cli.status.selfcheck_skip", exc=exc))
 
     # —— 开机自启任务状态 ——
     try:
         auto_installed = autostart_mod.task_exists(autostart_mod.AUTOSTART_TASK_NAME)
-        hint = "aaa autostart off 关闭" if auto_installed else "aaa autostart on 开启"
-        console.print(f"开机自启：{'已安装' if auto_installed else '未安装'}（{hint}）")
+        hint = (
+            t("cli.status.hint_autostart_off")
+            if auto_installed
+            else t("cli.status.hint_autostart_on")
+        )
+        console.print(
+            t(
+                "cli.status.autostart_line",
+                state=t("common.state_installed")
+                if auto_installed
+                else t("common.state_not_installed"),
+                hint=hint,
+            )
+        )
     except Exception as exc:  # noqa: BLE001
-        console.print(f"(开机自启状态读取失败：{exc})")
+        console.print(t("cli.status.autostart_read_failed", exc=exc))
 
 
 def _process_label(event: Any) -> str:
@@ -942,29 +1167,42 @@ def _process_label(event: Any) -> str:
     return f"{name}({pid})"
 
 
-@app.command()
+@app.command(help=t("cli.tail.doc"))
 def tail(
-    verdict: str | None = typer.Option(None, "--verdict", help="只看指定判定"),
+    verdict: str | None = typer.Option(None, "--verdict", help=t("opt.tail_verdict.help")),
     pid: int | None = typer.Option(None, "--pid"),
     host: str | None = typer.Option(None, "--host"),
-    interval: float = typer.Option(1.0, "--interval", min=0.1, help="轮询间隔秒"),
-    from_start: bool = typer.Option(False, "--from-start", help="从最早事件开始（默认只看新事件）"),
-    once: bool = typer.Option(False, "--once", help="只轮询一次后退出（测试/脚本用）"),
+    interval: float = typer.Option(1.0, "--interval", min=0.1, help=t("opt.tail_interval.help")),
+    from_start: bool = typer.Option(False, "--from-start", help=t("opt.tail_from_start.help")),
+    once: bool = typer.Option(False, "--once", help=t("opt.tail_once.help")),
     data_dir: Path | None = DataDirOpt,
 ) -> None:
     """实时滚动显示新事件（rich Live；Ctrl+C 退出）。"""
     paths = resolve_paths(data_dir)
     store = _open_store(paths)
     cursor = 0 if from_start else store.max_rowid()
+    filter_all = t("cli.tail.filter_all")
     console.print(
-        f"tail：监听新事件（verdict={verdict or '全部'} pid={pid or '全部'} "
-        f"host={host or '全部'}），Ctrl+C 退出。"
+        t(
+            "cli.tail.listen_line",
+            verdict=verdict or filter_all,
+            pid=pid or filter_all,
+            host=host or filter_all,
+        )
     )
     rows: list[list[str]] = []
 
     def _render() -> Table:
-        table = Table(title="事件流（新→旧）")
-        for col in ("时间", "判定", "风险", "方法", "路径", "主机", "进程"):
+        table = Table(title=t("cli.tail.table_title"))
+        for col in (
+            t("cli.col_time"),
+            t("cli.col_verdict"),
+            t("cli.col_risk"),
+            t("cli.col_method"),
+            t("cli.col_path"),
+            t("cli.col_host"),
+            t("cli.col_process"),
+        ):
             table.add_column(col)
         for row in rows[-30:]:
             table.add_row(*row)
@@ -987,33 +1225,70 @@ def tail(
                         ]
                     )
                     console.print(
-                        f"[green]+[/green] {event.id} {event.ts} {event.verdict} "
-                        f"{event.request.method} {event.destination.host}{event.request.path}"
+                        t(
+                            "cli.tail.new_event",
+                            id=event.id,
+                            ts=event.ts,
+                            verdict=event.verdict,
+                            method=event.request.method,
+                            host=event.destination.host,
+                            path=event.request.path,
+                        )
                     )
                 if once:
                     break
                 live.update(_render())
                 time.sleep(interval)
     except KeyboardInterrupt:
-        console.print("tail 已退出。")
+        console.print(t("cli.tail.exited"))
     finally:
         store.close()
 
 
-@app.command()
+@app.command(help=t("cli.report.doc") + "\n\n" + t("cli.report.detail"))
 def report(
-    since: str | None = typer.Option(None, "--since", help="起始：24h/30m/7d 或 ISO 时间"),
-    until: str | None = typer.Option(None, "--until", help="截止：ISO 时间"),
-    json_out: bool = typer.Option(False, "--json", help="以 JSON 输出"),
-    csv_out: bool = typer.Option(False, "--csv", help="以 CSV 输出"),
+    since: str | None = typer.Option(None, "--since", help=t("opt.report_since.help")),
+    until: str | None = typer.Option(None, "--until", help=t("opt.report_until.help")),
+    json_out: bool = typer.Option(False, "--json", help=t("opt.report_json.help")),
+    csv_out: bool = typer.Option(False, "--csv", help=t("opt.report_csv.help")),
     verify_evidence: bool = typer.Option(
-        False, "--verify-evidence", help="复核全部证据文件 sha256（大库较慢）"
+        False, "--verify-evidence", help=t("opt.report_verify.help")
     ),
+    daily: bool = typer.Option(False, "--daily", help=t("opt.report_daily.help")),
+    weekly: bool = typer.Option(False, "--weekly", help=t("opt.report_weekly.help")),
+    email: bool = typer.Option(False, "--email", help=t("opt.report_email.help")),
+    day: str | None = typer.Option(None, "--day", help=t("opt.report_day.help")),
+    out: Path | None = typer.Option(None, "--out", help=t("opt.report_out.help")),
+    policy: Path | None = typer.Option(None, "--policy", help=t("opt.policy.help")),
     data_dir: Path | None = DataDirOpt,
 ) -> None:
-    """聚合报告：按判定/进程/主机/规则统计（03 文档 T4.2）。"""
+    """聚合报告：按判定/进程/主机/规则统计（03 文档 T4.2）。
+
+    ``--daily``/``--weekly``（06 文档波次二 W6）：渲染自包含 HTML 日报/周报落
+    ``data/reports/``，``--email`` 经策略 notifications.email 通道发送。
+    """
+    if (daily or weekly) and (json_out or csv_out):
+        raise typer.BadParameter(t("cli.report.err_daily_json"))
+    if daily and weekly:
+        raise typer.BadParameter(t("cli.report.err_daily_both"))
+    report_day = date.today()
+    if day is not None:
+        try:
+            report_day = date.fromisoformat(day)
+        except ValueError as exc:
+            raise typer.BadParameter(t("cli.report.err_day", value=day)) from exc
+    if daily or weekly:
+        _render_html_report(
+            resolve_paths(data_dir),
+            policy,
+            report_day,
+            weekly=weekly,
+            send_email=email,
+            out=out,
+        )
+        return
     if json_out and csv_out:
-        raise typer.BadParameter("--json 与 --csv 只能二选一")
+        raise typer.BadParameter(t("cli.report.err_json_csv"))
     try:
         since_dt = parse_since(since)
         until_dt = parse_since(until)
@@ -1047,29 +1322,89 @@ def report(
             lines.append(f"day,{row['day']},,{row['n']}")
         console.print("\n".join(lines))
         return
-    table = Table(title=f"报告（{since or '全部'} ~ {until or '现在'}，共 {stats['total']} 条）")
-    table.add_column("维度", style="cyan")
-    table.add_column("项")
-    table.add_column("数量", justify="right")
+    table = Table(
+        title=t(
+            "cli.report.table_title",
+            since=since or t("cli.report.window_all"),
+            until=until or t("cli.report.window_now"),
+            total=stats["total"],
+        )
+    )
+    table.add_column(t("cli.report.col_dim"), style="cyan")
+    table.add_column(t("cli.col_item"))
+    table.add_column(t("cli.report.col_count"), justify="right")
     for verdict_value, count in stats["by_verdict"].items():
-        table.add_row("判定", verdict_value, str(count))
+        table.add_row(t("cli.report.row_verdict"), verdict_value, str(count))
     for row in stats["by_process"]:
-        table.add_row("进程", f"{row['pid'] or '-'} {row['process_name']}", str(row["n"]))
+        table.add_row(
+            t("cli.report.row_process"), f"{row['pid'] or '-'} {row['process_name']}", str(row["n"])
+        )
     for row in stats["by_host"]:
-        table.add_row("主机", str(row["host"]), str(row["n"]))
+        table.add_row(t("cli.report.row_host"), str(row["host"]), str(row["n"]))
     for row in stats["by_rule"]:
-        table.add_row("规则", f"{row['rule_id']}（{row['dim']}）", str(row["n"]))
+        table.add_row(t("cli.report.row_rule"), f"{row['rule_id']}（{row['dim']}）", str(row["n"]))
     console.print(table)
     if integrity is not None:
         console.print(
-            f"证据复核：检查 {integrity['checked']} 个，缺失 {len(integrity['missing'])}，"
-            f"损坏 {len(integrity['corrupted'])}"
+            t(
+                "cli.report.integrity",
+                checked=integrity["checked"],
+                missing=len(integrity["missing"]),
+                corrupted=len(integrity["corrupted"]),
+            )
         )
 
 
-@app.command()
+def _render_html_report(
+    paths: Any,
+    policy: Path | None,
+    report_day: date,
+    *,
+    weekly: bool,
+    send_email: bool,
+    out: Path | None,
+) -> None:
+    """渲染（可选邮件发送）HTML 日报/周报（06 文档波次二 W6；数据只读本机库）。"""
+    store = _open_store(paths)
+    try:
+        html = (
+            reporting_daily.render_weekly(store, report_day)
+            if weekly
+            else reporting_daily.render_daily(store, report_day)
+        )
+    finally:
+        store.close()
+    suffix = "weekly" if weekly else "daily"
+    target = out or (paths.data_dir / "reports" / f"{suffix}-{report_day.isoformat()}.html")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(html, encoding="utf-8")
+    except OSError as exc:
+        err_console.print(t("cli.report.render_failed", exc=exc))
+        raise typer.Exit(code=1) from exc
+    console.print(
+        t("cli.report.weekly_saved" if weekly else "cli.report.daily_saved", path=target)
+    )
+    if not send_email:
+        return
+    try:
+        doc = PolicyLoader(policy or config_mod.default_policy_file()).load()
+    except PolicyError as exc:
+        err_console.print(t("common.policy_load_failed", exc=exc))
+        raise typer.Exit(code=1) from exc
+    email_config = apply_env_overrides(doc.notifications).email
+    subject = reporting_daily.WEEKLY_TITLE if weekly else reporting_daily.DAILY_TITLE
+    try:
+        reporting_daily.email_daily(email_config, html, subject=subject)
+    except Exception as exc:  # noqa: BLE001 - 邮件失败如实以非零退出报告
+        err_console.print(t("cli.report.email_failed", exc=exc))
+        raise typer.Exit(code=1) from exc
+    console.print(t("cli.report.email_sent", to=", ".join(email_config.to_addrs)))
+
+
+@app.command(help=t("cli.trim.doc"))
 def trim(
-    days: int = typer.Option(..., "--days", min=0, help="保留最近 N 天，删除更早的事件与证据"),
+    days: int = typer.Option(..., "--days", min=0, help=t("opt.trim_days.help")),
     data_dir: Path | None = DataDirOpt,
 ) -> None:
     """清理过期事件与证据文件（02 文档 D6 保留期；``run`` 启动时也会自动执行）。"""
@@ -1080,22 +1415,21 @@ def trim(
     finally:
         store.close()
     console.print(
-        f"[green]trim 完成[/green]：删除 {result['events']} 条事件、{result['evidence']} 个证据文件"
-        f"（保留期 {days} 天）。"
+        t("cli.trim.done", events=result["events"], evidence=result["evidence"], days=days)
     )
 
 
-@app.command()
+@app.command(help=t("cli.harden.doc") + "\n\n" + t("cli.harden.detail"))
 def harden(
-    action: str = typer.Argument(..., help="on | off"),
+    action: str = typer.Argument(..., help=t("opt.harden_action.help")),
     proxy_exe: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
         None,
         "--proxy-exe",
-        help="on：放行的代理可执行文件（缺省=当前解释器/可执行文件自身）",
+        help=t("opt.harden_proxy_exe.help"),
     ),
     data_dir: Path | None = DataDirOpt,
     dry_run: bool = DryRunOpt,
-    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认（自动化用）"),
+    yes: bool = typer.Option(False, "--yes", "-y", help=t("opt.yes.help")),
 ) -> None:
     """防火墙加固开关（05 文档波次一 W2/波次二 §5）：把 443 出站收敛到本代理。
 
@@ -1114,18 +1448,13 @@ def harden(
     if action == "off":
         _harden_off(paths, dry_run=dry_run)
         return
-    raise typer.BadParameter("harden 只支持 on | off")
+    raise typer.BadParameter(t("cli.harden.err_action"))
 
 
 def _require_admin_for_harden() -> None:
     """管理员门禁（与 run --mode local 同样的 UAC 指引；非提权 netsh 必然失败）。"""
     if not is_current_process_elevated():
-        err_console.print(
-            "[red]harden 需要管理员权限（netsh advfirewall 需提升令牌）。[/red]\n"
-            "请以管理员身份运行 PowerShell / 终端后重试：\n"
-            "  右键开始菜单 → 终端(管理员) 或 PowerShell(管理员)\n"
-            "  然后执行：aaa harden on"
-        )
+        err_console.print(t("cli.harden.err_admin"))
         raise typer.Exit(code=2)
 
 
@@ -1135,40 +1464,39 @@ def _harden_on(
     """``harden on``：先展示规则清单（dry-run 概念）→ 确认 → journal-first 逐条创建。"""
     exe = proxy_exe if proxy_exe is not None else Path(sys.executable)
     if not exe.is_file():
-        err_console.print(f"[red]代理程序不存在：{exe}[/red]")
+        err_console.print(t("cli.harden.err_proxy_missing", exe=exe))
         raise typer.Exit(code=1)
     rules = firewall_mod.plan_harden(exe)
-    console.print(f"将创建 {len(rules)} 条出站防火墙规则（名称前缀 EgressSentinel-）：")
+    console.print(t("cli.harden.will_create", count=len(rules)))
     for rule in rules:
-        program = rule.program if rule.program else "（任意程序）"
+        program = rule.program if rule.program else t("cli.harden.program_any")
         console.print(
-            f"  - {rule.name}：{rule.action.upper()} {rule.protocol} {rule.remote_port}"
-            f" ← {program}"
+            t(
+                "cli.harden.rule_line",
+                name=rule.name,
+                action=rule.action.upper(),
+                protocol=rule.protocol,
+                port=rule.remote_port,
+                program=program,
+            )
         )
-    console.print(
-        "[yellow]已知边界：Windows 筛选平台 Block 优先于 Allow，any-Block 规则会同时"
-        "命中代理与 svchost 白名单——加固后 443 出站可能全断（含本工具代理）。"
-        "出现断网可立即执行 aaa harden off 还原。[/yellow]"
-    )
+    console.print(t("cli.harden.boundary"))
     if dry_run:
-        console.print("[yellow](dry-run)[/yellow] 未实施（未触达防火墙，未写状态文件）。")
+        console.print(t("cli.harden.dry_run"))
         return
     _require_admin_for_harden()
-    if not yes and not typer.confirm("确认创建以上防火墙规则？", default=False):
-        console.print("已取消。未对系统做任何改动。")
+    if not yes and not typer.confirm(t("cli.harden.confirm"), default=False):
+        console.print(t("cli.harden.cancelled_nochange"))
         raise typer.Exit()
     state = StateFile(paths.setup_state_file)
     try:
         entries = firewall_mod.apply_harden(state, exe)
     except FirewallError as exc:
-        err_console.print(f"[red]防火墙加固失败：{exc}[/red]")
+        err_console.print(t("cli.harden.err_apply", exc=exc))
         raise typer.Exit(code=1) from exc
     for entry in entries:
-        console.print(f"[green]已创建防火墙规则[/green] {entry.key}")
-    console.print(
-        f"加固完成：{len(entries)} 条规则在案（setup-state.json）；"
-        "还原：aaa harden off 或 aaa teardown firewall。"
-    )
+        console.print(t("cli.harden.rule_created", item_key=entry.key))
+    console.print(t("cli.harden.done", count=len(entries)))
 
 
 def _harden_off(paths: Any, *, dry_run: bool) -> None:
@@ -1176,13 +1504,15 @@ def _harden_off(paths: Any, *, dry_run: bool) -> None:
     entries = [e for e in StateFile(paths.setup_state_file).entries()
                if e.kind == firewall_mod.KIND_FIREWALL_RULE]
     if not entries:
-        console.print("状态文件没有防火墙加固记录（本就未加固，无需还原）。")
+        console.print(t("cli.harden.off_no_records"))
         return
-    console.print(f"将删除 {len(entries)} 条防火墙规则：")
+    console.print(t("cli.harden.will_delete", count=len(entries)))
     for entry in entries:
-        console.print(f"  - {entry.kind}:{entry.key}（{entry.ts}）")
+        console.print(
+            t("cli.teardown.entry_line", kind=entry.kind, item_key=entry.key, ts=entry.ts)
+        )
     if dry_run:
-        console.print("[yellow](dry-run)[/yellow] 未实施。")
+        console.print(t("common.dry_run_noop"))
         return
     _require_admin_for_harden()
     state = StateFile(paths.setup_state_file)
@@ -1192,15 +1522,15 @@ def _harden_off(paths: Any, *, dry_run: bool) -> None:
             firewall_mod.restore_harden(state, entry)
         except FirewallError as exc:
             failed += 1
-            err_console.print(f"[red]{entry.kind}:{entry.key} 删除失败：{exc}[/red]")
+            err_console.print(
+                t("cli.harden.err_delete", kind=entry.kind, item_key=entry.key, exc=exc)
+            )
         else:
-            console.print(f"[green]已删除防火墙规则[/green] {entry.key}")
+            console.print(t("cli.harden.rule_deleted", item_key=entry.key))
     if failed:
-        err_console.print(
-            f"[red]{failed} 条规则删除失败（记录保留，可重跑 aaa harden off 重试）。[/red]"
-        )
+        err_console.print(t("cli.harden.err_delete_failed", count=failed))
         raise typer.Exit(code=1)
-    console.print("[green]防火墙加固已全部还原。[/green]")
+    console.print(t("cli.harden.off_done"))
 
 
 # --------------------------------------------------------------------------
@@ -1208,18 +1538,18 @@ def _harden_off(paths: Any, *, dry_run: bool) -> None:
 # --------------------------------------------------------------------------
 
 
-@fingerprint_app.command("build")
+@fingerprint_app.command("build", help=t("cli.fp_build.doc") + "\n\n" + t("cli.fp_build.detail"))
 def fingerprint_build(
     repo: list[Path] | None = typer.Option(  # noqa: B008 - typer 惯用法
         None,
         "--repo",
-        help="仓库工作区路径（可多次传入；缺省读策略 fingerprint.repos）",
+        help=t("opt.fp_repo.help"),
     ),
     rebuild: bool = typer.Option(
-        False, "--rebuild", help="丢弃现有指纹库从零重建（缺省在既有库上增量合并）"
+        False, "--rebuild", help=t("opt.fp_rebuild.help")
     ),
     policy: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
-        None, "--policy", help="策略 YAML 文件（默认 policies/default.yaml）"
+        None, "--policy", help=t("opt.policy.help")
     ),
     data_dir: Path | None = DataDirOpt,
 ) -> None:
@@ -1230,24 +1560,21 @@ def fingerprint_build(
     """
     paths = resolve_paths(data_dir)
     try:
-        doc = PolicyLoader(policy or DEFAULT_POLICY_FILE).load()
+        doc = PolicyLoader(policy or config_mod.default_policy_file()).load()
     except PolicyError as exc:
-        err_console.print(f"[red]策略加载失败：{exc}[/red]")
+        err_console.print(t("common.policy_load_failed", exc=exc))
         raise typer.Exit(code=1) from exc
     repos = list(repo) if repo else [Path(p) for p in doc.fingerprint.repos]
     if not repos:
-        err_console.print(
-            "[red]未指定仓库。[/red] 用 --repo PATH（可多次）或在策略 "
-            "fingerprint.repos 配置仓库路径清单。"
-        )
+        err_console.print(t("cli.fp_build.err_no_repos"))
         raise typer.Exit(code=1)
     store_path = paths.data_dir / FINGERPRINTS_FILE_NAME
     index: FingerprintIndex | None = None if rebuild else FingerprintIndex.load(store_path)
     if index is None:
         if rebuild:
-            console.print("[yellow]--rebuild：丢弃现有指纹库，从零重建。[/yellow]")
+            console.print(t("cli.fp_build.msg_rebuild"))
         elif store_path.exists():
-            console.print("[yellow]现有指纹库缺失/损坏，将重建。[/yellow]")
+            console.print(t("cli.fp_build.msg_corrupt"))
         index = FingerprintIndex()
 
     failed: list[str] = []
@@ -1263,17 +1590,25 @@ def fingerprint_build(
         except ValueError as exc:
             message = str(exc)
             if "已在索引中" in message:
-                skipped.append(f"{name}：已在指纹库中（--rebuild 可从零重建）")
+                skipped.append(t("cli.fp_build.skip_exists", name=name))
                 continue
             failed.append(f"{name}：{exc}")
             continue
         merged += 1
         console.print(
-            f"[green]已并入[/green] {stats.repo}：索引 {stats.files_indexed} 文件 / "
-            f"{stats.slices_added} 片"
+            t(
+                "cli.fp_build.merged",
+                repo=stats.repo,
+                files=stats.files_indexed,
+                slices=stats.slices_added,
+            )
             + (
-                f"（跳过：过大 {stats.files_skipped_too_large}、"
-                f"二进制 {stats.files_skipped_binary}、读取失败 {stats.files_errored}）"
+                t(
+                    "cli.fp_build.skipped_suffix",
+                    too_large=stats.files_skipped_too_large,
+                    binary=stats.files_skipped_binary,
+                    errored=stats.files_errored,
+                )
                 if (
                     stats.files_skipped_too_large
                     or stats.files_skipped_binary
@@ -1284,29 +1619,384 @@ def fingerprint_build(
         )
         if stats.slice_cap_reached:
             console.print(
-                f"[yellow]仓库 {stats.repo} 触达总片上限（{stats.total_slices} 片），"
-                "后续文件未入库。[/yellow]"
+                t("cli.fp_build.slice_cap", repo=stats.repo, total=stats.total_slices)
             )
     for note in skipped:
-        console.print(f"[yellow]跳过[/yellow] {note}")
+        console.print(t("cli.fp_build.skip_line", note=note))
     for error in failed:
-        err_console.print(f"[red]失败[/red] {error}")
+        err_console.print(t("cli.fp_build.fail_line", error=error))
     if merged == 0 and failed:
         # 全部仓库都失败：如实以非零退出报告，不落盘（库内容未变）
-        err_console.print("[red]没有任何仓库被并入，指纹库未改动。[/red]")
+        err_console.print(t("cli.fp_build.err_all_failed"))
         raise typer.Exit(code=1)
     if merged == 0:
         # 重复执行（请求的仓库都已在库中）：幂等 no-op，成功返回
-        console.print("没有新增仓库（请求的仓库都已在指纹库中）；指纹库未改动。")
+        console.print(t("cli.fp_build.no_new"))
         return
     index.save(store_path)
     console.print(
-        f"[green]指纹库已保存[/green] {store_path}：{len(index.repos)} 仓库 / "
-        f"{index.total_slices} 片 / {index.digest_count} 指纹。"
-        + ("（重启 aaa run 后生效）" if doc.fingerprint.enabled else "")
+        t(
+            "cli.fp_build.saved",
+            path=store_path,
+            repos=len(index.repos),
+            slices=index.total_slices,
+            digests=index.digest_count,
+        )
+        + (t("cli.fp_build.restart_hint") if doc.fingerprint.enabled else "")
     )
     if failed:
         raise typer.Exit(code=1)
+
+
+# --------------------------------------------------------------------------
+# service：Windows 服务化（06 文档波次一 W1 / 波次二接线）
+# --------------------------------------------------------------------------
+
+
+@service_app.command("install", help=t("cli.service_install.doc"))
+def service_install(
+    highest: bool = typer.Option(
+        True, "--highest/--limited", help=t("opt.service_highest.help")
+    ),
+    data_dir: Path | None = DataDirOpt,
+    yes: bool = typer.Option(False, "--yes", "-y", help=t("opt.yes.help")),
+) -> None:
+    """安装开机服务计划任务（ONSTART+SYSTEM；需管理员，改动记录 setup-state.json）。"""
+    paths = resolve_paths(data_dir)
+    log_file = paths.data_dir / service_mod.SERVICE_LOG_NAME
+    console.print(
+        t(
+            "cli.service_install.will_do",
+            task_name=service_mod.SERVICE_TASK_NAME,
+            log_file=log_file,
+        )
+    )
+    if not is_current_process_elevated():
+        err_console.print(t("cli.service_install.err_admin"))
+        raise typer.Exit(code=2)
+    if not yes and not typer.confirm(t("cli.service_install.confirm"), default=False):
+        console.print(t("common.cancelled"))
+        raise typer.Exit()
+    state = StateFile(paths.setup_state_file)
+    try:
+        result = service_mod.install_service(state, paths.data_dir, highest=highest)
+    except service_mod.ServiceError as exc:
+        err_console.print(t("cli.service_install.err", exc=exc))
+        raise typer.Exit(code=1) from exc
+    for warning in result.warnings:
+        err_console.print(t("cli.service_status.conflict", warning=warning))
+    console.print(t("cli.service_install.done", task_name=result.task_name))
+
+
+@service_app.command("uninstall", help=t("cli.service_uninstall.doc"))
+def service_uninstall(data_dir: Path | None = DataDirOpt) -> None:
+    """删除服务计划任务并清理记录（幂等）。"""
+    paths = resolve_paths(data_dir)
+    removed = service_mod.uninstall_service(StateFile(paths.setup_state_file))
+    if removed:
+        console.print(
+            t("cli.service_uninstall.removed", task_name=service_mod.SERVICE_TASK_NAME)
+        )
+    else:
+        console.print(t("cli.service_uninstall.absent"))
+
+
+@service_app.command("status", help=t("cli.service_status.doc"))
+def service_status_cmd(data_dir: Path | None = DataDirOpt) -> None:
+    """查看服务计划任务安装状态与互斥提示（只读）。"""
+    paths = resolve_paths(data_dir)
+    result = service_mod.service_status(StateFile(paths.setup_state_file))
+    installed = result.task_exists or result.journaled
+    if result.command is not None and result.log_file is not None:
+        console.print(
+            t(
+                "cli.service_status.line",
+                task_name=result.task_name,
+                state=t("common.state_installed") if installed else t("common.state_not_installed"),
+                command=result.command,
+                log_file=result.log_file,
+            )
+        )
+    else:
+        console.print(
+            t(
+                "cli.service_status.line_no_journal",
+                task_name=result.task_name,
+                state=t("common.state_installed") if installed else t("common.state_not_installed"),
+            )
+        )
+    for warning in result.warnings:
+        err_console.print(t("cli.service_status.conflict", warning=warning))
+
+
+# --------------------------------------------------------------------------
+# tray：系统托盘（06 文档波次一 W2 / 波次二接线）
+# --------------------------------------------------------------------------
+
+
+@app.command(help=t("cli.tray.doc"))
+def tray(data_dir: Path | None = DataDirOpt) -> None:
+    """启动系统托盘（依赖 pystray/Pillow：pip install -e .[tray]；缺依赖以退出码 2 结束）。"""
+    from aaa.tray import run_tray  # 延迟导入：托盘为可选功能
+
+    paths = resolve_paths(data_dir)
+    code = run_tray(paths.data_dir)
+    if code:
+        raise typer.Exit(code=code)
+
+
+# --------------------------------------------------------------------------
+# rules：规则市场导出/导入（06 文档波次一 W7 / 波次二接线）
+# --------------------------------------------------------------------------
+
+
+@rules_app.command("export", help=t("cli.rules_export.doc"))
+def rules_export(
+    section: str = typer.Argument(..., help=t("opt.rules_section.help")),
+    out: Path | None = typer.Option(None, "--out", help=t("opt.rules_out.help")),
+    policy: Path | None = typer.Option(None, "--policy", help=t("opt.policy.help")),
+) -> None:
+    """导出策略段为 YAML 文本（--out 落盘，缺省打印到 stdout）。"""
+    doc = _load_policy_or_exit(policy)
+    try:
+        text = export_section(doc, section)
+    except RulesHubError as exc:
+        err_console.print(t("cli.rules_export.err", exc=exc))
+        raise typer.Exit(code=1) from exc
+    if out is None:
+        console.print(text, markup=False, highlight=False)
+        return
+    try:
+        atomic_write_text(out, text)
+    except OSError as exc:
+        err_console.print(t("common.err_plain", exc=exc))
+        raise typer.Exit(code=1) from exc
+    console.print(t("cli.rules_export.done", section=section, path=out))
+
+
+@rules_app.command("import", help=t("cli.rules_import.doc"))
+def rules_import(
+    section: str = typer.Argument(..., help=t("opt.rules_section.help")),
+    source: str = typer.Argument(..., help=t("opt.rules_source.help")),
+    merge: str = typer.Option("replace", "--merge", help=t("opt.rules_merge.help")),
+    policy: Path | None = typer.Option(None, "--policy", help=t("opt.rules_policy.help")),
+) -> None:
+    """把 YAML 文件（``-`` 读 stdin）导入当前策略段：三关校验全过才原子落盘。"""
+    target = policy or config_mod.default_policy_file()
+    try:
+        current_yaml = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        err_console.print(t("common.read_failed", exc=exc))
+        raise typer.Exit(code=1) from exc
+    if source == "-":
+        yaml_str = sys.stdin.read()
+    else:
+        try:
+            yaml_str = Path(source).read_text(encoding="utf-8")
+        except OSError as exc:
+            err_console.print(t("common.read_failed", exc=exc))
+            raise typer.Exit(code=1) from exc
+    console.print(t("cli.rules_import.note_comments"))
+    try:
+        import_section(current_yaml, section, yaml_str, merge=merge, output_path=target)
+    except RulesHubError as exc:
+        err_console.print(t("cli.rules_import.err", exc=exc))
+        raise typer.Exit(code=1) from exc
+    console.print(t("cli.rules_import.done", section=section, merge=merge, path=target))
+
+
+# --------------------------------------------------------------------------
+# gitleaks：上游 secrets 规则同步（06 文档波次一 W7 / 波次二接线）
+# --------------------------------------------------------------------------
+
+
+@gitleaks_app.command("sync", help=t("cli.gitleaks_sync.doc"))
+def gitleaks_sync(
+    source: str = typer.Argument(..., help=t("opt.gitleaks_source.help")),
+    out: Path | None = typer.Option(None, "--out", help=t("opt.gitleaks_out.help")),
+    data_dir: Path | None = DataDirOpt,
+) -> None:
+    """从 URL 或本地 TOML 同步 gitleaks 规则并转换为规则包 YAML。"""
+    paths = resolve_paths(data_dir)
+    target = out or (paths.data_dir / "rules" / "gitleaks.yaml")
+    try:
+        result = sync_gitleaks(source, output_path=target)
+    except RulesHubError as exc:
+        err_console.print(t("cli.gitleaks_sync.err", exc=exc))
+        raise typer.Exit(code=1) from exc
+    console.print(
+        t(
+            "cli.gitleaks_sync.done",
+            converted=result.converted,
+            skipped=len(result.skipped),
+            sha256=result.sha256[:12],
+            path=result.output_path,
+        )
+    )
+
+
+# --------------------------------------------------------------------------
+# hub：多机聚合（06 文档波次一 W8 / 波次二接线）
+# --------------------------------------------------------------------------
+
+
+@hub_app.command("serve", help=t("cli.hub_serve.doc"))
+def hub_serve(
+    host: str = typer.Option("0.0.0.0", "--host", help=t("opt.hub_host.help")),
+    port: int = typer.Option(_HUB_DEFAULT_PORT, "--port", help=t("opt.hub_port.help")),
+    token: str | None = typer.Option(None, "--token", help=t("opt.hub_token.help")),
+    data_dir: Path | None = DataDirOpt,
+) -> None:
+    """启动 hub 中心收集服务（默认 0.0.0.0，Bearer 令牌鉴权）。"""
+    shared_token = token or os.environ.get(HUB_TOKEN_ENV, "")
+    if not shared_token:
+        err_console.print(t("cli.hub_serve.err_token"))
+        raise typer.Exit(code=2)
+    try:
+        from aaa.hub.collector import HubCollector, run_hub  # 延迟导入：hub 为可选依赖
+    except ImportError as exc:
+        err_console.print(t("cli.hub_serve.err_dep", exc=exc))
+        raise typer.Exit(code=1) from exc
+    paths = resolve_paths(data_dir)
+    paths.ensure_runtime_dirs()
+    collector = HubCollector(paths.data_dir / "hub.db", shared_token)
+    console.print(t("cli.hub_serve.db_line", db_file=paths.data_dir / "hub.db"))
+    console.print(t("cli.hub_serve.listening", host=host, port=port))
+    try:
+        run_hub(collector, host=host, port=port)
+    finally:
+        collector.close()
+
+
+@hub_forward_app.command("status", help=t("cli.hub_forward_status.doc"))
+def hub_forward_status(
+    data_dir: Path | None = DataDirOpt,
+    policy: Path | None = typer.Option(None, "--policy", help=t("opt.policy.help")),
+) -> None:
+    """查看 agent 端转发配置与最近统计（运行中的 aaa run 写 data/hub-forward.json）。"""
+    paths = resolve_paths(data_dir)
+    try:
+        doc = PolicyLoader(policy or config_mod.default_policy_file()).load()
+    except PolicyError as exc:
+        err_console.print(t("common.policy_load_failed", exc=exc))
+        raise typer.Exit(code=1) from exc
+    config = apply_hub_env_overrides(doc.hub)
+    if not config.enabled:
+        console.print(t("cli.hub_forward.disabled"))
+    else:
+        console.print(
+            t("cli.hub_forward.enabled", url=config.url, batch_size=config.batch_size)
+        )
+    stats_file = paths.data_dir / HUB_FORWARD_STATS_FILENAME
+    snapshot: dict[str, Any] | None = None
+    try:
+        loaded = json.loads(stats_file.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict) and isinstance(loaded.get("stats"), dict):
+            snapshot = loaded
+    except (OSError, ValueError):
+        snapshot = None
+    if snapshot is None:
+        console.print(t("cli.hub_forward.no_stats"))
+        return
+    stats = snapshot["stats"]
+    console.print(
+        t(
+            "cli.hub_forward.stats_line",
+            sent_events=stats.get("sent_events", 0),
+            sent_batches=stats.get("sent_batches", 0),
+            dropped=stats.get("dropped", 0),
+            retries_used=stats.get("retries_used", 0),
+            send_errors=stats.get("send_errors", 0),
+            queue_size=stats.get("queue_size", 0),
+            updated=snapshot.get("updated", "-"),
+        )
+    )
+    if stats.get("last_error"):
+        console.print(t("cli.hub_forward.last_error", error=stats["last_error"]))
+
+
+# --------------------------------------------------------------------------
+# policy：lint / use / list（多 profile，06 文档波次二）
+# --------------------------------------------------------------------------
+
+
+@policy_app.command("use", help=t("cli.policy_use.doc"))
+def policy_use(
+    name: str | None = typer.Argument(None, help=t("opt.policy_name.help")),
+    reset: bool = typer.Option(False, "--reset", help=t("opt.policy_reset.help")),
+) -> None:
+    """切换当前策略 profile（拷贝 profiles/<名>.yaml → current.yaml，运行中 2s 热更新）。"""
+    policies_dir = config_mod.DEFAULT_POLICIES_DIR
+    current = policies_dir / CURRENT_POLICY_FILE_NAME
+    if reset:
+        if current.exists():
+            current.unlink()
+            console.print(t("cli.policy_use.reset_done"))
+        else:
+            console.print(t("cli.policy_use.no_current"))
+        return
+    if not name:
+        raise typer.BadParameter(t("opt.policy_name.help"))
+    profile = policies_dir / PROFILES_DIR_NAME / f"{name}.yaml"
+    if not profile.is_file():
+        err_console.print(t("cli.policy_use.err_missing", path=profile))
+        raise typer.Exit(code=1)
+    try:
+        PolicyLoader(profile).load()  # 校验不过绝不切换
+    except PolicyError as exc:
+        err_console.print(t("cli.policy_use.err_invalid", exc=exc))
+        raise typer.Exit(code=1) from exc
+    try:
+        # 拷贝语义（06 文档波次二：current 软链/拷贝）：原样拷贝文本，保留 YAML 注释
+        atomic_write_text(current, profile.read_text(encoding="utf-8"))
+    except OSError as exc:
+        err_console.print(t("common.err_plain", exc=exc))
+        raise typer.Exit(code=1) from exc
+    console.print(t("cli.policy_use.done", name=name, path=current))
+
+
+@policy_app.command("list", help=t("cli.policy_list.doc"))
+def policy_list() -> None:
+    """列出可用策略 profile 与当前生效策略。"""
+    policies_dir = config_mod.DEFAULT_POLICIES_DIR
+    profiles_dir = policies_dir / PROFILES_DIR_NAME
+    active = config_mod.default_policy_file()
+    profiles = sorted(profiles_dir.glob("*.yaml")) if profiles_dir.is_dir() else []
+    if not profiles:
+        console.print(t("cli.policy_list.none"))
+        return
+    table = Table(title=t("cli.policy_list.title", policies_dir=profiles_dir))
+    table.add_column(t("cli.policy_list.col_name"), style="cyan")
+    table.add_column(t("cli.policy_list.col_status"), no_wrap=True)
+    current_text = t("cli.policy_list.current")
+    for profile in profiles:
+        is_current = profile == active or (
+            active.is_file()
+            and active.name == CURRENT_POLICY_FILE_NAME
+            and _files_equal(profile, active)
+        )
+        table.add_row(profile.stem, current_text if is_current else "-")
+    console.print(table)
+    if active.name != CURRENT_POLICY_FILE_NAME:
+        console.print(t("cli.policy_list.base_default"))
+
+
+def _files_equal(left: Path, right: Path) -> bool:
+    """两文件内容是否一致（profile 与 current.yaml 对账；换行差异归一——
+    Windows 文本写出的 \\r\\n 与 atomic_write_text 的 \\n 视为同一内容）。"""
+    try:
+        return left.read_text(encoding="utf-8") == right.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _load_policy_or_exit(policy: Path | None) -> PolicyDocument:
+    """加载（当前生效）策略文档；失败打印并以退出码 1 结束。"""
+    try:
+        return PolicyLoader(policy or config_mod.default_policy_file()).load()
+    except PolicyError as exc:
+        err_console.print(t("common.policy_load_failed", exc=exc))
+        raise typer.Exit(code=1) from exc
 
 
 # --------------------------------------------------------------------------
@@ -1314,36 +2004,33 @@ def fingerprint_build(
 # --------------------------------------------------------------------------
 
 
-@app.command()
+@app.command(help=t("cli.web.doc"))
 def web(
-    host: str = typer.Option("127.0.0.1", "--host", help="监听地址（仅允许本地回环）"),
+    host: str = typer.Option("127.0.0.1", "--host", help=t("opt.web_host.help")),
     port: int = typer.Option(DEFAULT_WEB_PORT, "--port"),
     data_dir: Path | None = DataDirOpt,
     policy: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
-        None, "--policy", help="策略 YAML 文件（默认 policies/default.yaml）"
+        None, "--policy", help=t("opt.policy.help")
     ),
 ) -> None:
     """启动本地 Web 面板（只读 + confirm 决策；仅监听 127.0.0.1）。"""
     if host not in _LOOPBACK_HOSTS:
         raise typer.BadParameter(
-            f"Web 面板只允许本地回环监听（{', '.join(_LOOPBACK_HOSTS)}），收到 {host!r}"
+            t("cli.web.err_not_loopback", hosts=", ".join(_LOOPBACK_HOSTS), host=host)
         )
     try:
         from aaa.web.app import create_app  # 延迟导入：web 为可选依赖
     except ImportError as exc:
-        err_console.print(
-            f"[red]Web 面板依赖缺失：{exc}[/red]\n"
-            "请安装 web 扩展：pip install -e .[web]（fastapi + uvicorn）"
-        )
+        err_console.print(t("cli.web.err_missing_dep", exc=exc))
         raise typer.Exit(code=1) from exc
     paths = resolve_paths(data_dir)
     paths.ensure_runtime_dirs()
     store = _open_store(paths)
-    loader = PolicyLoader(policy or DEFAULT_POLICY_FILE)
+    loader = PolicyLoader(policy or config_mod.default_policy_file())
     try:
         loader.load()
     except PolicyError as exc:
-        err_console.print(f"[yellow]策略加载失败（面板仍可查看事件）：{exc}[/yellow]")
+        err_console.print(t("cli.web.err_policy_soft", exc=exc))
     panel = create_app(
         db=store,
         evidence_dir=paths.evidence_dir,
@@ -1351,7 +2038,7 @@ def web(
         decisions=DecisionStore(paths.decisions_file, default_ttl=resolve_confirm_ttl(None)),
         data_dir=paths.data_dir,
     )
-    console.print(f"[green]Web 面板[/green] http://{host}:{port}（仅本地访问；Ctrl+C 退出）")
+    console.print(t("cli.web.listening", host=host, port=port))
     try:
         import uvicorn
 
@@ -1365,52 +2052,84 @@ def web(
 # --------------------------------------------------------------------------
 
 
-@policy_app.command("lint")
+@policy_app.command("lint", help=t("cli.policy_lint.doc"))
 def policy_lint(
     file: Path | None = typer.Argument(  # noqa: B008 - typer 惯用法
-        None, help="策略 YAML 文件（默认 policies/default.yaml）"
+        None, help=t("opt.policy.help")
     ),
 ) -> None:
     """校验策略文件（pydantic 严格 schema，03 文档 T3.1）：合法打印摘要，非法以 1 退出。"""
-    path = file or DEFAULT_POLICY_FILE
+    path = file or config_mod.default_policy_file()
     loader = PolicyLoader(path)
     try:
         doc = loader.load()
     except PolicyError as exc:
-        err_console.print(f"[red]策略校验失败：{path}[/red]\n{exc}")
+        err_console.print(t("cli.policy_lint.err_invalid", path=path, exc=exc))
         raise typer.Exit(code=1) from exc
-    table = Table(title=f"策略合法：{path}")
-    table.add_column("项")
-    table.add_column("值")
-    table.add_row("version", str(doc.version))
-    table.add_row("mode", doc.mode)
-    table.add_row("policy_version", doc.policy_version)
-    table.add_row("fail_open", str(doc.defaults.fail_open))
-    table.add_row("max_body_scan", str(doc.defaults.max_body_scan))
-    table.add_row("domain classes", ", ".join(sorted(doc.domains.classes)) or "-")
-    table.add_row("domain rules", str(len(doc.domains.rules)))
-    table.add_row("process profiles", ", ".join(sorted(doc.processes.profiles)) or "-")
-    table.add_row("process rules", str(len(doc.processes.rules)))
-    table.add_row("scanners", ", ".join(doc.content.scanners) or "-")
-    table.add_row("content rules", str(len(doc.content.rules)))
-    table.add_row("volume rules", str(len(doc.volume)))
-    table.add_row("time_window rules", str(len(doc.time_window)))
+    table = Table(title=t("cli.policy_lint.table_title", path=path))
+    table.add_column(t("cli.col_item"))
+    table.add_column(t("cli.col_value"))
+    table.add_row(t("cli.policy_lint.row_version"), str(doc.version))
+    table.add_row(t("cli.policy_lint.row_mode"), doc.mode)
+    table.add_row(t("cli.policy_lint.row_policy_version"), doc.policy_version)
+    table.add_row(t("cli.policy_lint.row_fail_open"), str(doc.defaults.fail_open))
+    table.add_row(t("cli.policy_lint.row_max_body_scan"), str(doc.defaults.max_body_scan))
     table.add_row(
-        "fingerprint",
-        f"enabled={doc.fingerprint.enabled}, repos={len(doc.fingerprint.repos)}, "
-        f"min_hits={doc.fingerprint.min_hits}",
+        t("cli.policy_lint.row_domain_classes"), ", ".join(sorted(doc.domains.classes)) or "-"
+    )
+    table.add_row(t("cli.policy_lint.row_domain_rules"), str(len(doc.domains.rules)))
+    table.add_row(
+        t("cli.policy_lint.row_process_profiles"), ", ".join(sorted(doc.processes.profiles)) or "-"
+    )
+    table.add_row(t("cli.policy_lint.row_process_rules"), str(len(doc.processes.rules)))
+    table.add_row(t("cli.policy_lint.row_scanners"), ", ".join(doc.content.scanners) or "-")
+    table.add_row(t("cli.policy_lint.row_content_rules"), str(len(doc.content.rules)))
+    table.add_row(t("cli.policy_lint.row_volume_rules"), str(len(doc.volume)))
+    table.add_row(t("cli.policy_lint.row_time_window_rules"), str(len(doc.time_window)))
+    table.add_row(
+        t("cli.policy_lint.row_fingerprint"),
+        t(
+            "cli.policy_lint.fp_desc",
+            enabled=doc.fingerprint.enabled,
+            repos=len(doc.fingerprint.repos),
+            min_hits=doc.fingerprint.min_hits,
+        ),
     )
     table.add_row(
-        "judge",
-        f"enabled={doc.judge.enabled}, model={doc.judge.model or '-'}, "
-        f"budget/day={doc.judge.max_events_per_day}",
+        t("cli.policy_lint.row_judge"),
+        t(
+            "cli.policy_lint.judge_desc",
+            enabled=doc.judge.enabled,
+            model=doc.judge.model or "-",
+            budget=doc.judge.max_events_per_day,
+        ),
     )
     table.add_row(
-        "response",
+        t("cli.policy_lint.row_response"),
         f"{len(doc.response.rules)} rules"
-        + (f"（{', '.join(r.id for r in doc.response.rules)}）" if doc.response.rules else ""),
+        + (
+            t("cli.policy_lint.response_ids", ids=", ".join(r.id for r in doc.response.rules))
+            if doc.response.rules
+            else ""
+        ),
     )
-    table.add_row("encrypt", f"enabled={doc.encrypt.enabled}")
+    table.add_row(
+        t("cli.policy_lint.row_encrypt"),
+        t("cli.policy_lint.encrypt_desc", enabled=doc.encrypt.enabled),
+    )
+    # v0.3.0 新段（06 文档波次二）：sampling / hub
+    table.add_row(
+        t("cli.policy_lint.row_sampling"),
+        t(
+            "cli.policy_lint.sampling_desc",
+            enabled=doc.sampling.enabled,
+            head_bytes=doc.sampling.head_bytes,
+        ),
+    )
+    table.add_row(
+        t("cli.policy_lint.row_hub"),
+        t("cli.policy_lint.hub_desc", enabled=doc.hub.enabled, url=doc.hub.url),
+    )
     console.print(table)
 
 

@@ -72,3 +72,65 @@ jobs:
           body_path: release-notes.md
           files: release/*
           fail_on_unmatched_files: true
+
+  # Windows 安装器（Inno Setup，06 文档 W3）：仅 windows-amd64、仅 tag 触发。
+  # 复用 build job 的 windows-amd64 onefile 产物，编译出
+  # egress-sentinel-setup-v<版本>.exe 上传 artifact 并挂到同一 Release。
+  # 版本号经 scripts/iss_version.py 从 pyproject.toml 读取后 /DMyAppVersion 注入。
+  installer:
+    name: installer-windows-amd64
+    runs-on: windows-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Download windows-amd64 exe from build job
+        uses: actions/download-artifact@v4
+        with:
+          # 必须与 build job upload-artifact 的 name 完全一致（test_installer.py 对账）
+          name: egress-sentinel-windows-amd64
+          path: downloaded
+      - name: Place exe where ISS expects it
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp downloaded/egress-sentinel-windows-amd64.exe dist/ai-agent-audit.exe
+          ls -la dist/
+      - name: Resolve version from pyproject
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(python scripts/iss_version.py)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Installer version: $VERSION"
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Compile installer (ISCC)
+        shell: pwsh
+        env:
+          AAA_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          $candidates = @(
+            (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source,
+            (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+            (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+          )
+          $iscc = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $iscc) { throw "ISCC.exe 未找到：choco install innosetup 未生效？" }
+          Write-Host "ISCC: $iscc"
+          & $iscc "/DMyAppVersion=$env:AAA_VERSION" (Resolve-Path "installer/egress-sentinel.iss")
+          if ($LASTEXITCODE -ne 0) { throw "ISCC 编译失败（exit=$LASTEXITCODE）" }
+          Get-ChildItem dist/egress-sentinel-setup-*.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egress-sentinel-setup-windows-amd64
+          path: dist/egress-sentinel-setup-*.exe
+          if-no-files-found: error
+      - name: Upload installer to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/egress-sentinel-setup-*.exe
+          fail_on_unmatched_files: true

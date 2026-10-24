@@ -1,0 +1,91 @@
+# work profile —— 办公机日常档（aaa policy use work 切换）
+# 定位：密钥/代码外发强告警 + 大上传采样降载 + 响应侧注入标注开启；保持 dry-run 只告警。
+version: 1
+mode: dry-run
+defaults:
+  fail_open: true
+  max_body_scan: 262144
+
+domains:
+  classes:
+    known_ai_api:
+      - api.anthropic.com
+      - api.openai.com
+      - generativelanguage.googleapis.com
+      - api.deepseek.com
+      - api.moonshot.cn
+      - openrouter.ai
+    code_hosting:
+      - github.com
+      - api.github.com
+      - gitlab.com
+  rules:
+    - id: domain-unknown
+      match: { class: unknown }
+      action: alert
+      weight: 20
+
+processes:
+  profiles:
+    agent_cli: { exe_regex: '(?i)(claude|cursor|codex|copilot|node|python|java)' }
+    browser: { exe_regex: '(?i)(chrome|msedge|firefox)\.exe$' }
+  rules:
+    - id: non-agent-to-ai-api
+      match: { profile_not: agent_cli, dest_class: known_ai_api }
+      action: alert
+      weight: 30
+
+content:
+  scanners: [secrets, pii, code_leak]
+  rules:
+    - id: secret-leak
+      scanner: secrets
+      action: block
+      weight: 60
+    - id: pii-bulk
+      scanner: pii
+      match: { hits_gt: 10 }
+      action: confirm
+      weight: 40
+    - id: code-bulk-upload
+      match: { body_size_gt: 512000, code_likeness_gt: 0.6 }
+      action: confirm
+      weight: 40
+
+volume:
+  - id: huge-body
+    match: { body_size_gt: 5242880 }
+    action: alert
+    weight: 20
+
+time_window:
+  - id: burst
+    match: { requests_gt: 60, window_seconds: 60 }
+    action: alert
+    weight: 20
+
+notifications:
+  min_action: alert
+  toast:
+    enabled: true
+  webhook:
+    enabled: false
+  email:
+    enabled: false
+  rate_limit:
+    max_per_minute: 10
+
+# 工作档开启采样：大上传只扫头部 256KB（secrets 豁免全扫，行为不回退）。
+sampling:
+  enabled: true
+  head_bytes: 262144
+
+# 响应侧注入标注：仅高危特征（指令覆盖/隐藏载体）标注 alert。
+response:
+  rules:
+    - id: response-injection
+      patterns: high
+      action: alert
+
+hub:
+  enabled: false

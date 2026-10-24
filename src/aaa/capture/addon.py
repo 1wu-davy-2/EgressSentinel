@@ -27,6 +27,7 @@ from mitmproxy import connection, http, tls
 from aaa.attribution.table import ProcessAttributor
 from aaa.engine.pipeline import AuditPipeline, EvaluationInput
 from aaa.engine.verdict import ALERT, MatchedRule
+from aaa.hub.forwarder import Forwarder
 from aaa.judge import LLMJudge
 from aaa.notify.dispatcher import Dispatcher
 from aaa.notify.summary import build_summary
@@ -47,6 +48,9 @@ logger = logging.getLogger(__name__)
 
 #: 阻断响应状态码与说明（02 文档 D5：合成 403 JSON 响应）
 BLOCK_STATUS_CODE = 403
+
+#: 立即落盘（不等批量阈值）的动作：阻断/失败放行/流错误必须即时可见可审计
+_IMMEDIATE_ACTION_TAKEN = frozenset({"blocked-403", "blocked-connect", "fail-open", "error"})
 
 
 def make_block_response(matched: list[MatchedRule]) -> http.Response:
@@ -118,6 +122,8 @@ class AuditAddon:
         decisions: DecisionStore | None = None,
         dispatcher: Dispatcher | None = None,
         judge: LLMJudge | None = None,
+        forwarder: Forwarder | None = None,
+        batch_size: int = 1,
     ) -> None:
         self.events = events
         self.evidence = evidence
@@ -133,6 +139,11 @@ class AuditAddon:
         #: LLM 辅助判定器（05 文档波次二 §3：可选注入，None 时完全跳过；
         #: 只有 ``judge.config.enabled`` 为真才会真正调用）
         self.judge = judge
+        #: hub 转发器（06 文档 W8/波次二：可选注入，None 时零外发；策略 hub 段默认关）
+        self.forwarder = forwarder
+        #: 事件批量落盘阈值（06 文档 W4/波次二：1=逐条即时落盘；>1 走
+        #: ``insert_events`` 单事务批量，阻断/fail-open/error 事件始终立即落盘）
+        self.batch_size = max(1, int(batch_size))
         #: client_connected 已见的连接数
         self.connections_seen = 0
         #: 归因未命中（unknown）的事件计数
@@ -143,6 +154,10 @@ class AuditAddon:
         self.response_annotated_count = 0
         #: 已做 LLM 判定的事件计数（v0.2.0 观测指标）
         self.judged_count = 0
+        #: 已入队 hub 转发的事件计数（v0.3.0 观测指标）
+        self.forwarded_count = 0
+        #: 批量落盘缓冲（batch_size=1 时恒空，行为与 v0.2.x 逐条一致）
+        self._save_buffer: list[AuditEvent] = []
         self._pending: dict[str, AuditEvent] = {}
         #: 连接对象 → 归因结果（client_connected 时点查，源端口时效性，02 文档 D2）
         self._conn_process: weakref.WeakKeyDictionary[connection.Client, ProcessInfo] = (
@@ -186,7 +201,7 @@ class AuditAddon:
                 event.risk_score = min(100, sum(m.weight for m in blocked))
                 event.matched_rules = [m.to_dict() for m in blocked]
                 event.action_taken = "blocked-connect"
-                self.events.append(event)
+                self._save(event)
                 self._maybe_notify(event)
                 flow.response = make_block_response(blocked)
         except Exception:
@@ -239,7 +254,7 @@ class AuditAddon:
                 )
             self._annotate_response(flow, event)
             self._maybe_judge(event)
-            self.events.append(event)
+            self._save(event)
             self._maybe_notify(event)
         except Exception:
             logger.exception("audit addon response 钩子异常（fail-open）")
@@ -251,16 +266,67 @@ class AuditAddon:
             if flow.error is not None:
                 event.error = str(flow.error)
             event.action_taken = "error"
-            self.events.append(event)
+            self._save(event)
             self._maybe_notify(event)
         except Exception:
             logger.exception("audit addon error 钩子异常（fail-open）")
 
     def done(self) -> None:
-        """引擎退出：清空 pending（事件已尽力落盘，未完成的流不阻塞退出）。"""
+        """引擎退出：清空 pending 并冲刷批量落盘缓冲（未完成的流不阻塞退出）。"""
         self._pending.clear()
+        try:
+            self.flush_saves()
+        except Exception:  # noqa: BLE001 - 退出路径的落盘失败不阻断收尾
+            logger.exception("audit addon done 冲刷落盘缓冲异常（忽略）")
 
     # ------------------------------------------------------------- internals
+
+    def _save(self, event: AuditEvent) -> None:
+        """事件落盘统一入口（06 文档 W4/波次二）：批量缓冲 + hub 转发。
+
+        - ``batch_size <= 1``：逐条 ``append``（与 v0.2.x 行为逐字节一致）；
+        - ``batch_size > 1``：进缓冲，攒满阈值批量 ``insert_events``（单事务）；
+          阻断/fail-open/error 类重要事件**立即冲刷**（审计即时性优先于批量收益）；
+        - 落盘成功的事件转交 :meth:`_forward`（hub 转发器可选，None 零外发）。
+        """
+        if self.batch_size <= 1:
+            self.events.append(event)
+            self._forward(event)
+            return
+        important = (
+            event.action_taken in _IMMEDIATE_ACTION_TAKEN or event.verdict in ("block", "confirm")
+        )
+        self._save_buffer.append(event)
+        if important or len(self._save_buffer) >= self.batch_size:
+            self.flush_saves()
+
+    def flush_saves(self) -> None:
+        """把落盘缓冲批量写入 store（``insert_events`` 单事务；JSONL mirror 语义在 db 层）。
+
+        store 不支持批量（自定义 sink）时逐条回退；写入失败抛给钩子层兜底
+        （缓冲先换出再写入，失败不回灌——与 fail-open 哲学一致，丢批记日志）。
+        """
+        if not self._save_buffer:
+            return
+        batch, self._save_buffer = self._save_buffer, []
+        insert = getattr(self.events, "insert_events", None)
+        if callable(insert):
+            insert(batch)
+        else:
+            for item in batch:
+                self.events.append(item)
+        for item in batch:
+            self._forward(item)
+
+    def _forward(self, event: AuditEvent) -> None:
+        """事件入队 hub 转发器（脱敏在 Forwarder 侧完成；None/异常不影响主路径）。"""
+        if self.forwarder is None:
+            return
+        try:
+            self.forwarder.enqueue(event)
+            self.forwarded_count += 1
+        except Exception:  # noqa: BLE001 - 转发入队绝不影响审计主路径
+            logger.exception("hub 转发入队异常（fail-open）")
 
     @property
     def _enforce_mode(self) -> bool:

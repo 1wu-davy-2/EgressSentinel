@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ai-agent-audit"
-version = "0.2.0"
+version = "0.3.0"
 description = "EgressSentinel（出口哨兵，原名 AI-AGENT-AUDIT）：本机 AI Agent 外发流量审计工具（Windows 优先）"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,6 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27", "ruff>=0.4"]
 web = ["fastapi>=0.110", "uvicorn>=0.29"]
+tray = ["pystray>=0.19", "Pillow>=10.0"]
 build = ["pyinstaller>=6.0"]
 
 [project.scripts]
@@ -41,6 +42,14 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# cli.py：typer 惯用法（typer.Option/typer.Argument 与 i18n 的 t() 都出现在参数默认值
+# 位置，B008 对该 DSL 误报；05 文档此前以逐处 noqa 处理，v0.3.0 命令量大改为文件级豁免）
+"src/aaa/cli.py" = ["B008"]
+# locales/*.py：纯数据词条目录（key → 原文/译文），词条字面不改写不拆行——
+# 拆行拼接会让"与 cli.py/wizard.py 原文逐字一致"的核对变困难，E501 文件级豁免
+"src/aaa/locales/*" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

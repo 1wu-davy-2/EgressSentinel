@@ -368,7 +368,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
 <header class="hero" id="top">
   <div class="wrap">
     <div class="hero-badge">
-      <span class="pill"><span class="dot"></span><span data-i18n="hero.badge">🎉 v0.2.0 正式发布 · 五平台可执行文件已上线</span></span>
+      <span class="pill"><span class="dot"></span><span data-i18n="hero.badge">🎉 v0.3.0 正式发布 · 五平台可执行文件 + Windows 安装包</span></span>
     </div>
     <h1><span data-i18n="hero.h1a">你的 AI Agent 在往哪里</span><br><span class="grad-text" data-i18n="hero.h1b">发送你的代码？</span></h1>
     <p class="sub" data-i18n="hero.sub"><b>EgressSentinel（出口哨兵）</b>是部署在本机的 AI Agent 外发流量审计代理：还原<b>任意进程</b>的 HTTPS 请求明文，把每条请求<b>归因到进程</b>，五维规则<b>事中阻断</b>密钥与代码的违规外发——全程本地留痕，不依赖应用自愿接入。</p>
@@ -382,7 +382,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
     <div class="term">
       <div class="term-bar">
         <i style="background:#f87171"></i><i style="background:#fbbf24"></i><i style="background:#34d399"></i>
-        <span class="t mono" data-i18n="term.title">aaa run — EgressSentinel v0.2.0 · mode=dry-run</span>
+        <span class="t mono" data-i18n="term.title">aaa run — EgressSentinel v0.3.0 · mode=dry-run</span>
       </div>
       <div class="term-body mono">
         <div class="cmd">aaa run</div>
@@ -400,7 +400,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
 <!-- ============ 2 · 统计带 ============ -->
 <div class="stats">
   <div class="stats-inner">
-    <div class="stat"><div class="n grad-text">585+</div><div class="l" data-i18n="stat.t1">自动化测试全绿</div></div>
+    <div class="stat"><div class="n grad-text">650+</div><div class="l" data-i18n="stat.t1">自动化测试全绿</div></div>
     <div class="stat"><div class="n grad-text">43</div><div class="l" data-i18n="stat.t2">密钥检测规则（gitleaks 移植）</div></div>
     <div class="stat"><div class="n grad-text">5</div><div class="l" data-i18n="stat.t3">发布平台（Linux/macOS/Windows × amd64/arm64）</div></div>
     <div class="stat"><div class="n grad-text">MIT</div><div class="l" data-i18n="stat.t4">开源协议 · 证据不出本机</div></div>
@@ -444,6 +444,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
       <div class="card"><div class="ic">🚀</div><h3 data-i18n="feat.c7t">安装即守护，全量监控</h3><p data-i18n="feat.c7p">setup 完成即默认后台启动：五维规则与密钥/PII/代码三大扫描器开箱全开，开机自启——无需手动配置、无需重启。</p></div>
       <div class="card"><div class="ic">🤖</div><h3 data-i18n="feat.c8t">常驻与自愈，杜绝断网</h3><p data-i18n="feat.c8p">关机/注销 4 秒优雅收尾不阻塞系统；开机自启拉起代理；watchdog 检测「代理已启用但进程没跑」自动还原网络——没有 VPN 式开机断网问题。</p></div>
       <div class="card" style="border-color:rgba(168,85,247,.4)"><div class="ic">🧬</div><h3 data-i18n="feat.c9t">仓库指纹检测（独家）</h3><p data-i18n="feat.c9p">预扫描你的 git 仓库生成 n-gram 指纹索引，请求体逐片比对——命中精确到<b>哪个文件哪一行</b>被外发，误报大降；另有 LLM 辅助判定、响应侧注入检测与证据 AES-256-GCM 加密（v0.2.0，默认关闭按需开启）。</p></div>
+      <div class="card"><div class="ic">📦</div><h3 data-i18n="feat.c10t">软件形态与生态</h3><p data-i18n="feat.c10p">Windows 安装包（卸载自动还原系统）、开机服务与系统托盘、多策略 profile 一键切换、CLI 中英双语（<code>--lang</code>）、HTML 日报周报邮件投递、规则导入导出与 gitleaks 同步、多机中心化聚合（v0.3.0）。</p></div>
     </div>
   </div>
 </section>
@@ -668,12 +669,12 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
         <div style="flex:1;min-width:280px"><b data-i18n="rm.2t">② 安全深化</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.2p">仓库指纹 / 防火墙加固 / LLM 辅助判定 / 响应侧注入检测 / 证据加密</div></div>
       </div>
       <div class="card" style="display:flex;gap:16px;align-items:center;text-align:left;flex-wrap:wrap">
-        <span class="tag confirm" style="font-size:.78rem">🚧 v0.3.0</span>
-        <div style="flex:1;min-width:280px"><b data-i18n="rm.3t">③ 工程与体验（进行中）</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.3p">服务化+安装器+托盘 / 性能优化 / 多策略 profile / CLI 中英双语</div></div>
+        <span class="tag allow" style="font-size:.78rem">✅ v0.3.0</span>
+        <div style="flex:1;min-width:280px"><b data-i18n="rm.3t">③ 工程与体验</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.3p">服务化+安装器+托盘 / 性能优化 / 多策略 profile / CLI 中英双语</div></div>
       </div>
       <div class="card" style="display:flex;gap:16px;align-items:center;text-align:left;flex-wrap:wrap">
-        <span class="tag confirm" style="font-size:.78rem">🚧 v0.3.0</span>
-        <div style="flex:1;min-width:280px"><b data-i18n="rm.4t">④ 数据与生态（进行中）</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.4p">日报周报（邮件投递）/ 规则导入导出+gitleaks 同步 / 多机中心化聚合</div></div>
+        <span class="tag allow" style="font-size:.78rem">✅ v0.3.0</span>
+        <div style="flex:1;min-width:280px"><b data-i18n="rm.4t">④ 数据与生态</b><div style="color:var(--muted);font-size:.86rem" data-i18n="rm.4p">日报周报（邮件投递）/ 规则导入导出+gitleaks 同步 / 多机中心化聚合</div></div>
       </div>
     </div>
   </div>
@@ -683,7 +684,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
 <section>
   <div class="wrap">
     <div class="cta-box">
-      <span class="pill" style="margin-bottom:20px"><span class="dot"></span><span data-i18n="cta.badge">v0.2.0 · 五平台可执行文件</span></span>
+      <span class="pill" style="margin-bottom:20px"><span class="dot"></span><span data-i18n="cta.badge">v0.3.0 · 五平台可执行文件 + 安装包</span></span>
       <h2><span data-i18n="cta.h2a">准备好看清你的</span><span class="grad-text" data-i18n="cta.h2b">出口流量</span><span data-i18n="cta.h2c">了吗？</span></h2>
       <p data-i18n="cta.p">下载 EgressSentinel，五分钟开始审计你的 AI Agent 与任意应用</p>
       <div class="hero-cta">
@@ -762,27 +763,29 @@ var I18N_EN = {
   "nav.why": "Why", "nav.features": "Features", "nav.choice": "Comparison", "nav.ui": "Interface",
   "nav.quickstart": "Quick Start", "nav.faq": "FAQ", "nav.download": "Free Download",
   "nav.features2": "Features", "nav.choice2": "Comparison",
-  "hero.badge": "🎉 v0.2.0 released · executables for 5 platforms",
+  "hero.badge": "🎉 v0.3.0 released · executables + Windows installer",
   "hero.h1a": "Where is your AI agent",
   "hero.h1b": "sending your code?",
   "hero.sub": "<b>EgressSentinel</b> is a local audit proxy for AI agents: it decrypts the HTTPS traffic of <b>any process</b>, attributes every request to its <b>source process</b>, and <b>blocks in-flight</b> secret and code exfiltration with a five-dimension ruleset — fully logged locally, no opt-in from apps required.",
   "cta.download": "⬇ Free Download", "cta.docs": "Documentation",
-  "cta.badge": "v0.2.0 · executables for 5 platforms",
+  "cta.badge": "v0.3.0 · executables + installer, 5 platforms",
   "nav.roadmap": "Roadmap",
   "feat.c9t": "Repo-fingerprint leak detection (exclusive)",
   "feat.c9p": "Pre-scan your git repos into an n-gram fingerprint index and match request bodies chunk-by-chunk — pinpoint exactly <b>which file and line</b> is being exfiltrated. Plus LLM judging, response-side injection detection and AES-256-GCM evidence encryption (v0.2.0, off by default).",
+  "feat.c10t": "Software form & ecosystem",
+  "feat.c10p": "Windows installer (uninstall auto-restores system settings), boot service & system tray, policy profiles, bilingual CLI (<code>--lang</code>), HTML daily/weekly email reports, rule import-export with gitleaks sync, multi-machine aggregation (v0.3.0).",
   "rm.eyebrow": "Roadmap", "rm.h2": "Insight-list progress",
   "rm.p": "Shipped as \"GLM-5.3 plans, GLM-5.3-Flash implements in parallel\"",
   "rm.1t": "① Alert notifications", "rm.1p": "toast / wecom·dingtalk·feishu·slack·discord webhooks / email; rate-limited digests; hot-reloaded config",
   "rm.2t": "② Security deepening", "rm.2p": "repo fingerprint / firewall harden / LLM judge / response-side injection detection / evidence encryption",
-  "rm.3t": "③ Engineering & experience (in progress)", "rm.3p": "service + installer + tray / performance / policy profiles / bilingual CLI",
-  "rm.4t": "④ Data & ecosystem (in progress)", "rm.4p": "daily & weekly reports / rule import-export + gitleaks sync / multi-machine aggregation",
+  "rm.3t": "③ Engineering & experience", "rm.3p": "service + installer + tray / performance / policy profiles / bilingual CLI",
+  "rm.4t": "④ Data & ecosystem", "rm.4p": "daily & weekly reports / rule import-export + gitleaks sync / multi-machine aggregation",
   "cta.h2a": "Ready to see your ", "cta.h2b": "egress traffic", "cta.h2c": "?",
   "cta.p": "Download EgressSentinel and start auditing your AI agents in five minutes",
   "cta.dl2": "⬇ Download Now",
   "cta.platform": "Windows · Linux · macOS (amd64 / arm64) · or install via pip",
   "hero.platform": "Windows 10/11 (first-class) · Linux · macOS · amd64 / arm64",
-  "term.title": "aaa run — EgressSentinel v0.2.0 · mode=dry-run",
+  "term.title": "aaa run — EgressSentinel v0.3.0 · mode=dry-run",
   "term.engine": "[engine] regular proxy on 127.0.0.1:8080 · attributor ready · policy default.yaml (dry-run)",
   "term.ev1": "known_ai_api · allowed · logged", "term.ev2": "domain-unknown first-seen alert",
   "term.ev3": "secret-leak matched AKIA**** · blocked with 403",

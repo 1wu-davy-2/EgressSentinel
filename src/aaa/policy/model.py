@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aaa.hub.model import HubConfig
 from aaa.judge.llm import JudgeConfig
 from aaa.notify.model import NotifyConfig, disabled_notify_config
 
@@ -212,6 +213,23 @@ class EncryptSection(_Strict):
     enabled: bool = False
 
 
+class SamplingSection(_Strict):
+    """``policy.sampling`` 段：内容扫描采样（06 文档 W4，decisions D-2026-10-25-46）。
+
+    - ``enabled``：**默认关**——老策略文件（无本段）升级零惊扰，保持 v0.2.x 的
+      全量扫描行为；出厂 ``default.yaml`` 也显式写 ``enabled: false``（06 文档
+      波次二第 5 条「sampling 段默认关」）。与管线层出厂 ``SamplingConfig``
+      （enabled=True，head_bytes==max_body_scan 出厂值下零行为差异）是**两层
+      独立默认**（D-46 第 3 条）；
+    - ``head_bytes``：触发采样后非豁免扫描器只扫头部字节数；生效截断 =
+      ``min(max_body_scan, head_bytes)``——采样只会少扫、绝不比既有行为多扫；
+      secrets 扫描器豁免（``SAMPLING_EXEMPT_SCANNERS``，secrets 行为不回退）。
+    """
+
+    enabled: bool = False
+    head_bytes: int = Field(default=262144, ge=1)
+
+
 class PolicyDocument(_Strict):
     """策略文档根模型（02 文档 §5 + 04 文档 §2 通知段 + 05 文档安全深化段）。"""
 
@@ -234,6 +252,12 @@ class PolicyDocument(_Strict):
     """响应侧标注段（05 文档波次二 §1）。缺省 rules=[] = 不扫描响应体。"""
     encrypt: EncryptSection = Field(default_factory=EncryptSection)
     """证据加密段（05 文档 W5）。缺省=关闭（写明文，读透明兼容密文）。"""
+    sampling: SamplingSection = Field(default_factory=SamplingSection)
+    """内容扫描采样段（06 文档 W4）。缺省=关闭（与 v0.2.x 全量扫描行为一致）；
+    ``aaa run`` 接线为 ``AuditPipeline(sampling=...)``（decisions D-46）。"""
+    hub: HubConfig = Field(default_factory=HubConfig)
+    """多机聚合段（06 文档 W8，模型复用 ``hub.model.HubConfig``）。缺省=关闭
+    （零外发）；env 覆盖 ``AAA_HUB_URL/AAA_HUB_TOKEN``（D-47 收窄版试用意图）。"""
 
     # ------------------------------------------------------------- 派生工具
 

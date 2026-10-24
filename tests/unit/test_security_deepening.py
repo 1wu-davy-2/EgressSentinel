@@ -876,11 +876,12 @@ class TestStatusAndVersion:
         assert "安全深化" in out
         assert "已加固 1 条规则" in out
 
-    def test_version_is_0_2_0(self) -> None:
-        assert __version__ == "0.2.0"
+    def test_version_is_0_3_0(self) -> None:
+        """v0.3.0（06 文档波次二第 8 条）：``aaa --version`` 输出 0.3.0。"""
+        assert __version__ == "0.3.0"
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert "0.2.0" in result.output
+        assert "0.3.0" in result.output
 
     def test_policy_lint_shows_new_sections(self, tmp_path: Path) -> None:
         result = runner.invoke(app, ["policy", "lint"])

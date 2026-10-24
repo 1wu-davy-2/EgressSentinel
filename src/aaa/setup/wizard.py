@@ -8,6 +8,9 @@
 
 应用动作与 ``aaa setup ca/proxy/env`` 子命令共用同一实现（journal-first，全部记录到
 ``data/setup-state.json``，可被 ``aaa teardown`` 幂等还原）。
+
+i18n（06 文档波次二）：全部用户可见文案经 ``t()`` 取词（zh 目录与原文逐字一致，
+默认输出不变；``--lang``/``AAA_LANG`` 切英文）。``t()`` 绝不抛异常，缺词条回落 zh。
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from aaa.config import AppPaths
+from aaa.i18n import t
 from aaa.setup import ca as ca_mod
 from aaa.setup import envvars as envvars_mod
 from aaa.setup import proxy as proxy_mod
@@ -54,16 +58,18 @@ def collect_setup_plans(
 
     # --- 第 1 步：CA ---
     store_name = "machine" if machine_ca else "user"
-    store_label = "LocalMachine\\Root（需管理员）" if machine_ca else "CurrentUser\\Root"
+    store_label = (
+        t("wizard.ca.store_machine") if machine_ca else t("wizard.ca.store_user")
+    )
     plan_lines = [
-        f"将证书安装到 {store_label} 证书存储：",
-        f"  CA 文件：{ca_info.path}",
-        f"  序列号：{ca_info.serial}（teardown 按序列号精确删除，不误删其他证书）",
-        f"  指纹(SHA1)：{ca_info.thumbprint}",
-        f"  记录改动到：{paths.setup_state_file}",
+        t("wizard.ca.header", store_label=store_label),
+        t("wizard.ca.file", path=ca_info.path),
+        t("wizard.ca.serial", serial=ca_info.serial),
+        t("wizard.ca.thumbprint", thumbprint=ca_info.thumbprint),
+        t("wizard.ca.record_to", state_file=paths.setup_state_file),
     ]
     if machine_ca:
-        plan_lines.append("  ⚠ 机器级存储影响所有用户，需要管理员权限。")
+        plan_lines.append(t("wizard.ca.machine_warning"))
 
     def _apply_ca() -> None:
         state.record(
@@ -74,33 +80,30 @@ def collect_setup_plans(
         )
         ca_mod.install_cert(store_name, ca_info.path)
 
-    plans.append(SetupPlan(title="① CA 根证书", lines=plan_lines, apply=_apply_ca))
+    plans.append(SetupPlan(title=t("wizard.ca.title"), lines=plan_lines, apply=_apply_ca))
 
     # --- 第 2 步：系统代理（WinINET 用户级） ---
     proxy_lines = [
-        f"将设置 WinINET 用户代理：{proxy_host}:{proxy_port}",
-        f"  注册表：HKCU\\{proxy_mod.WININET_KEY}",
-        "  键值：ProxyEnable=1, "
-        f"ProxyServer={proxy_host}:{proxy_port}, ProxyOverride=<local>;localhost;127.0.0.1",
-        "  写入后 InternetSetOption 通知 WinINET 刷新（浏览器建议重启）",
-        f"  旧值先记录到：{paths.setup_state_file}（teardown 还原）",
+        t("wizard.proxy.header", host=proxy_host, port=proxy_port),
+        t("wizard.proxy.registry", reg_key=proxy_mod.WININET_KEY),
+        t("wizard.proxy.values", host=proxy_host, port=proxy_port),
+        t("wizard.proxy.refresh"),
+        t("wizard.proxy.record_to", state_file=paths.setup_state_file),
     ]
 
     def _apply_proxy() -> None:
         proxy_mod.apply_user_proxy(state, proxy_host, proxy_port)
 
-    plans.append(
-        SetupPlan(title="② 系统代理（WinINET 用户级）", lines=proxy_lines, apply=_apply_proxy)
-    )
+    plans.append(SetupPlan(title=t("wizard.proxy.title"), lines=proxy_lines, apply=_apply_proxy))
 
     # --- 第 3 步：用户环境变量（02 文档 D1 清单） ---
     merged = paths.data_dir / ca_mod.MERGED_PEM_NAME
     values = envvars_mod.build_env_values(proxy_host, proxy_port, ca_info.path, merged)
     env_lines = [
-        f"将创建合并 PEM：{merged}（mitmproxy CA + 系统 CA，供 REQUESTS_CA_BUNDLE 等）",
-        "将写入以下用户环境变量（HKCU\\Environment，新终端生效）：",
-        *[f"  {name} = {values[name]}" for name in sorted(values)],
-        "  并广播 WM_SETTINGCHANGE；全部记录到状态文件可还原",
+        t("wizard.env.merged_pem", path=merged),
+        t("wizard.env.header"),
+        *[t("wizard.env.line", name=name, value=values[name]) for name in sorted(values)],
+        t("wizard.env.broadcast"),
     ]
 
     def _apply_env() -> None:
@@ -108,7 +111,7 @@ def collect_setup_plans(
         envvars_mod.record_file_created(state, merged)
         envvars_mod.apply_user_envvars(state, values)
 
-    plans.append(SetupPlan(title="③ 用户环境变量", lines=env_lines, apply=_apply_env))
+    plans.append(SetupPlan(title=t("wizard.env.title"), lines=env_lines, apply=_apply_env))
     return plans
 
 
@@ -125,32 +128,32 @@ def run_setup_wizard(
     （journal-first：失败步骤的记录保留，teardown 重放为幂等 no-op）。
     """
     applied: list[str] = []
-    echo("AI-AGENT-AUDIT 一键引导：以下步骤将修改系统设置，逐步确认执行。")
+    echo(t("wizard.welcome"))
     if dry_run:
-        echo("[yellow](dry-run)[/yellow] 只展示计划，不实施任何改动。")
+        echo(t("wizard.dry_run_banner"))
     for plan in plans:
         echo("")
         echo(f"[bold cyan]{plan.title}[/bold cyan]")
         for line in plan.lines:
             echo(f"  {line}")
-        if not confirm(f"{plan.title}：执行该步骤？"):
-            echo("  [dim]已跳过。[/dim]")
+        if not confirm(t("wizard.confirm_step", title=plan.title)):
+            echo(t("wizard.skipped"))
             continue
         if dry_run:
-            echo("  [yellow](dry-run)[/yellow] 未实施。")
+            echo(t("wizard.dry_run_step"))
             applied.append(plan.title)
             continue
         try:
             plan.apply()
         except Exception as exc:  # noqa: BLE001 - 单步失败不中断向导
-            echo(f"  [red]失败：{exc}[/red]（记录已保留，可 teardown 还原后重试）")
+            echo(t("wizard.step_failed", exc=exc))
             logger.exception("setup 向导步骤失败：%s", plan.title)
             continue
-        echo("  [green]完成。[/green]")
+        echo(t("wizard.step_done"))
         applied.append(plan.title)
     echo("")
     if applied:
-        echo(f"向导结束：{'、'.join(applied)}。可运行 aaa teardown 一键还原全部改动。")
+        echo(t("wizard.summary_applied", applied="、".join(applied)))
     else:
-        echo("向导结束：未执行任何改动。")
+        echo(t("wizard.summary_none"))
     return applied

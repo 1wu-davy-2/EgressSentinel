@@ -32,9 +32,10 @@ def test_aaa_help_runs() -> None:
 
 
 def test_version_flag() -> None:
+    """v0.3.0（06 文档波次二第 8 条）：版本号断言随发版更新。"""
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
-    assert "0.2.0" in result.output
+    assert "0.3.0" in result.output
 
 
 def test_run_local_rejected_without_admin(monkeypatch) -> None:

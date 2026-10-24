@@ -1,5 +1,76 @@
 # 更新日志 Changelog
 
+## [v0.3.0] - 2026-10-25
+
+体验与生态（洞察清单 ③+④，docs/06-v030-experience-plan.md）：波次一 8 个并行模块
+（服务化/托盘/安装器/性能/i18n/日报/规则市场/多机聚合）+ 波次二集成。**外发类能力
+（hub 转发、gitleaks 下载）默认关闭**，升级零惊扰。
+
+### 新增
+
+- **Windows 服务化**（W1）：`aaa service install|uninstall|status`——ONSTART 计划任务
+  （SYSTEM 账户、RunLevel 可选 `--highest/--limited`），开机无人登录即拉起代理
+  （日志 `data/service.log`）；journal-first 记入 setup-state.json；与登录自启任务
+  双开时互斥提示（建议而非强制）；`aaa teardown service` 可还原。需管理员（非提权
+  exit 2 + UAC 指引）。
+- **系统托盘**（W2）：`aaa tray`（extra `pip install -e .[tray]`，缺依赖退出码 2 +
+  pip 提示）——状态只读展示 / 打开面板（端口去重）/ 启动·重启代理 / 退出；只读编排层
+  绝不杀进程、不改代理设置；图标 svg→png→盾形绘制三级降级。
+- **Inno Setup 安装器**（W3）：`installer/egress-sentinel.iss` + CI `installer` job
+  （仅 windows-amd64，tag 触发）产出 `egress-sentinel-setup-v<版本>.exe`；卸载时先
+  taskkill 结束常驻进程、执行 `teardown`（幂等还原）再删文件；用户数据 `data/` 保留；
+  版本号经 `scripts/iss_version.py` 从 pyproject 注入，未注入编译即报 `#error`。
+- **HTML 日报/周报**（W6）：`aaa report --daily|--weekly [--email] [--day] [--out]`——
+  自包含单文件 HTML（按判定/进程/主机/规则聚合 + Top 事件 + 内联 SVG 趋势）；
+  路径/进程名经通知同一脱敏核心打码、表格 HTML 转义、不含 body 原文；`--email`
+  经策略 notifications.email 通道（注入式 SMTP）；`aaa teardown daily` 还原计划任务。
+- **规则市场**（W7）：`aaa rules export|import <section> [--merge replace|union]`——
+  策略段导出/导入，pydantic 三关校验全过才原子落盘（不合法绝不写）；union 按 id/键
+  合并（导入者胜）。`aaa gitleaks sync <URL|路径>`——gitleaks TOML 转本引擎 secrets
+  规则包（正则+熵+allowlist 映射、sha256 pin、不支持特性如实跳过并记录）。
+- **多机聚合**（W8，默认关）：agent 端 Forwarder（脱敏摘要 + 队列 + 退避重试 +
+  ≤50 条/批 + trust_env=False 直连）；中心端 `aaa hub serve`（Bearer 鉴权、
+  内存缓冲 → `data/hub.db` 机器名维度、跨机聚合查询）；`aaa hub forward status`
+  读取运行中 agent 的统计快照（`data/hub-forward.json`）。策略 `hub:` 段或
+  `AAA_HUB_URL`/`AAA_HUB_TOKEN` 环境变量（试用意图收窄版：两者都由 env 补齐且策略
+  从未配置才自动启用）。
+- **多 profile 策略切换**：`aaa policy use <name>|--reset` + `aaa policy list`——
+  `policies/profiles/*.yaml`（出厂自带 work/dev/strict 三份）拷贝为 `current.yaml`
+  （校验不过不切换、保留 YAML 注释），存在即成为所有命令缺省策略，运行中 `aaa run`
+  约 2 秒热更新生效；出厂 `policies/default.yaml` 永不被覆盖。
+- **双语 CLI**（W5）：全部用户可见文案（含 typer 帮助与向导）经 `t()` 取词，
+  `aaa --lang en <命令>` / `AAA_LANG=en` 切英文（en 全量翻译，`--help` 全英文）；
+  默认 zh 输出与 v0.2.x 逐字一致；缺词条回落 zh 并计数，绝不中断命令。
+- **性能**（W4）：事件批量落盘（`aaa run --db-batch N`，默认 20，整批单事务，
+  阻断/fail-open/error 事件始终立即落盘）；内容扫描采样（策略 `sampling:` 段，默认关，
+  body 超限时非豁免扫描器只扫头部字节，**secrets 豁免全扫不回退**）；SQLite WAL +
+  synchronous=NORMAL（旧库打开自动迁移）；事件规则表覆盖索引。
+
+### 变更
+
+- 版本 0.2.0 → 0.3.0；`aaa --version` 输出随之更新。
+- 策略 schema 新增 `sampling` / `hub` 两段（默认全关；老策略文件无这些段照常加载）；
+  `policies/default.yaml` 追加两段注释说明 + `policies/profiles/` 三份示例。
+- `aaa teardown` 目标新增 `service`（服务任务）与 `daily`（日报任务）。
+- `aaa policy lint` 摘要新增 `sampling` / `hub` 行；`aaa run` 启动概要新增
+  采样与 hub 转发两行。
+- `aaa hub` 包 `__init__` 改为惰性导出（PEP 562）：`policy.model` 引用
+  `HubConfig` 后，基础安装（无 web extra）不再因 collector 顶层 fastapi 导入而失败。
+- ruff 对 `src/aaa/cli.py`（typer 参数默认值 DSL 的 B008 误报）与 `src/aaa/locales/*`
+  （纯数据词条行）改为 per-file 豁免。
+- 新增测试：`tests/unit/test_wave2_integration.py`（29 例，schtasks/网络全注入）、
+  `tests/e2e/test_v030_experience_e2e.py`（6 例：profile 切换热更新真代理往返 /
+  `--lang en` 子进程冒烟 / 日报渲染脱敏 / forwarder→collector 本机 TCP 往返）；
+  `tests/conftest.py` 增 i18n 状态隔离夹具。
+
+### 已知边界（如实登记）
+
+- `aaa --lang` 影响运行时输出与（经启动期预扫描的）帮助文本；词条缺失回落 zh。
+- hub 中心 `GET` 端点同样要求 Bearer（局域网监听、跨机审计数据从紧）；
+  `hub.db`/`audit.db` 不整库加密（同 D-2026-10-24-39 边界，依赖磁盘级加密）。
+- W7 导入为整文重写，原策略 YAML 注释丢失（命令输出提示，可先 export 备份）。
+- 托盘 SVG 渲染依赖可选后端（cairosvg 未声明为依赖），缺省走 png/盾形兜底。
+
 ## [v0.2.0] - 2026-10-24
 
 安全能力深化（洞察清单 ②，docs/05-security-deepening-plan.md）：四个新模块 + 全链路

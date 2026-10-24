@@ -125,3 +125,25 @@ response:
 # 关闭时写入明文、读取仍透明兼容既有密文。开关在 aaa run 启动时生效（不热切换）。
 encrypt:
   enabled: false
+
+# ---------------------------------------------------------------------------
+# v0.3.0 体验与生态新段（docs/06-v030-experience-plan.md 波次二）：
+# 以下全部默认关闭——多档示例见 policies/profiles/（aaa policy use <名> 切换）。
+# ---------------------------------------------------------------------------
+
+# 内容扫描采样（06 文档 W4）：body 超过 defaults.max_body_scan 时，除 secrets
+# 豁免全扫外，其余扫描器只扫头部 head_bytes 字节，保证大上传低延迟。
+# 生效截断 = min(max_body_scan, head_bytes)——采样只会少扫、绝不比全量多扫。
+sampling:
+  enabled: false
+  head_bytes: 262144      # 256KB；启用采样时建议 ≤ defaults.max_body_scan
+
+# 多机聚合（06 文档 W8）：agent 端把脱敏事件摘要转发到 hub 中心（另一台机器）。
+# 默认关（跨机外发是显式行为）；url/token 也可用环境变量 AAA_HUB_URL/AAA_HUB_TOKEN
+# （环境变量优先；两者都由环境变量补齐且策略从未配置时视为试用意图自动启用）。
+hub:
+  enabled: false
+  url: ""                 # hub 中心基地址（如 http://192.168.1.10:8788）
+  token: ""               # 共享 Bearer 令牌（与中心一致；勿提交到仓库）
+  batch_size: 50          # 单次 POST 最大事件数（≤50）
+  timeout: 3.0            # HTTP 超时秒数

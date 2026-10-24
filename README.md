@@ -70,7 +70,10 @@ AI Agent（Claude Code / Cursor / Codex 类 CLI、IDE 插件、MCP 后台服务�
 - [x] 可执行文件打包（`dist/ai-agent-audit.exe`，PyInstaller onefile，`--help` 冒烟通过）
 - [x] 官网介绍页（`website/index.html`）
 - [x] 安全深化 v0.2.0（洞察清单 ②）：仓库指纹、响应侧注入标注、LLM 辅助判定、证据加密、防火墙加固实装
-- [ ] 后续强化（可选）：audit.db 整库加密、WFP 子层权重（绕过加固的 Allow 精确化）、服务化常驻
+- [x] 体验与生态 v0.3.0（洞察清单 ③+④，docs/06-v030-experience-plan.md）：服务化、托盘、
+      Inno Setup 安装器、HTML 日报、规则市场（gitleaks 同步）、多机聚合 hub、多 profile
+      策略切换、双语 CLI、扫描采样与批量落盘（波次一 8 个并行模块 + 波次二集成）
+- [ ] 后续强化（可选）：audit.db 整库加密、WFP 子层权重（绕过加固的 Allow 精确化）
 
 > 实现过程中的全部设计偏离与决策均记录在 `docs/notes/decisions.md`。
 
@@ -267,6 +270,114 @@ aaa teardown firewall    # 等价：只还原防火墙类改动
   同时命中代理与 svchost 白名单，`on` 后 443 出站可能全断（含本工具代理自身）；
   断网立即 `aaa harden off` 还原。真机启用前建议先在可还原环境演练
   （详见 docs/notes/decisions.md D-2026-10-24-38）。
+
+## 体验与生态（v0.3.0：服务化 / 托盘 / 安装器 / 日报 / 规则市场 / 多机聚合 / 双语）
+
+v0.3.0（docs/06-v030-experience-plan.md）新增能力，**外发类全部默认关闭**；
+`docs/notes/decisions.md` D-2026-10-25-40 起记录各规格落位。
+
+### 1. Windows 服务化（开机即守护，无需登录）
+
+```text
+aaa service install      # ONSTART 计划任务（SYSTEM 账户，RL HIGHEST），开机无人登录也拉起代理
+                         # 需管理员；journal-first 记入 setup-state.json；与登录自启任务互斥提示
+aaa service status       # 只读状态（任务存在性 / 运行命令 / 日志 data/service.log）
+aaa service uninstall    # 幂等删除；aaa teardown service / aaa teardown 同样可还原
+```
+
+装了服务建议 `aaa teardown autostart` 关掉登录任务（服务与登录自启双开会双实例抢占
+代理端口——命令输出会提示，不强制）。
+
+### 2. 系统托盘
+
+```powershell
+pip install -e .[tray]   # pystray + Pillow（可选 extra；未装时 aaa tray 以退出码 2 提示）
+aaa tray                 # 状态只读展示 / 打开面板 / 启动·重启代理 / 退出
+```
+
+托盘是只读编排层：不杀进程、不改代理设置；「重启代理」会提示用 `aaa teardown` 收尾旧进程。
+图标优先取 `website/icon.svg`（可选渲染后端）→ `icon-192.png` → 纯色盾形兜底绘制。
+
+### 3. Windows 安装包（Inno Setup）
+
+`installer/egress-sentinel.iss` + CI `installer` job（tag 触发）：构建
+`egress-sentinel-setup-v<版本>.exe`。卸载时**先 taskkill 结束常驻进程、执行
+`ai-agent-audit.exe teardown`（幂等还原系统改动）再删文件**；用户数据 `data/`
+保留不删。版本号由 `scripts/iss_version.py` 从 pyproject 注入，未经注入直接编译
+会因 `#error` 守卫失败（杜绝错版安装包）。
+
+### 4. HTML 日报 / 周报
+
+```text
+aaa report --daily                 # 当日 HTML 日报 → data/reports/daily-YYYY-MM-DD.html
+aaa report --weekly [--day DATE]   # ISO 周（周一为始）周报
+aaa report --daily --email         # 渲染后经策略 notifications.email 通道发送
+```
+
+自包含单文件 HTML：按判定/进程/主机/规则聚合 + Top 事件表 + 24 小时（周报 7 天）
+趋势 sparkline（内联 SVG）。路径/进程名经通知同一脱敏核心打码，表格单元格 HTML
+转义，报告不含 body/证据原文。计划任务自动发送：`aaa reporting` 任务可经
+`install_daily_task`（W6 库函数）安装，teardown 目标 `daily`。
+
+### 5. 规则市场（策略段导入导出 + gitleaks 同步）
+
+```text
+aaa rules export content            # 导出策略段为 YAML（--out 落盘，缺省 stdout）
+aaa rules import content piece.yaml --merge union
+                                    # 导入回策略：pydantic 三关校验全过才原子落盘
+                                    # replace=整段替换（默认）；union=按 id/键合并（导入者胜）
+aaa gitleaks sync <URL|本地.toml>    # gitleaks 规则转本引擎 secrets 规则包（sha256 pin）
+                                    # 缺省落 data/rules/gitleaks.yaml；不支持特性如实跳过并记录
+```
+
+注意：`import` 按整文重写策略文件，原 YAML 注释会丢失（命令输出会提示，可先 export 备份）。
+
+### 6. 多机聚合（hub，默认关）
+
+agent 端把**脱敏事件摘要**转发到另一台机器的中心端汇总（脱敏走通知同一核心，
+明文密钥绝不出机；httpx `trust_env=False` 直连；队列 + 退避重试 + ≤50 条/批）：
+
+```text
+# 中心机（局域网监听，所有端点 Bearer 鉴权）
+set AAA_HUB_TOKEN=共享令牌
+aaa hub serve                     # 默认 0.0.0.0:8788，事件落 data/hub.db（机器名维度）
+# agent 机器：策略 hub 段（url/token/batch_size）或环境变量 AAA_HUB_URL + AAA_HUB_TOKEN
+aaa hub forward status            # 转发配置与最近统计（运行中的 aaa run 写 data/hub-forward.json）
+```
+
+策略从未配置 hub 且两个环境变量都在时视为试用意图自动启用（策略显式
+`enabled: false` 永远获胜）。
+
+### 7. 多 profile 策略切换
+
+```text
+aaa policy list                   # 列出 policies/profiles/*.yaml（出厂自带 work/dev/strict 三份）
+aaa policy use strict             # 拷贝 profiles/strict.yaml → current.yaml（校验不过不切换）
+aaa policy use --reset            # 回到出厂 policies/default.yaml
+```
+
+`current.yaml` 存在即成为所有命令的缺省策略；运行中的 `aaa run` 约 2 秒热更新生效
+（E2E：切换 → 新请求按新规则求值）。`policies/default.yaml` 永不被覆盖。
+
+### 8. 双语 CLI（zh / en）
+
+```text
+aaa --lang en --help              # 启动期预扫描：帮助文本按该语言渲染
+AAA_LANG=en aaa status            # 环境变量同样生效（优先级：--lang > AAA_LANG > zh）
+```
+
+默认 zh，全部输出与 v0.2.x 逐字一致；词条目录 `src/aaa/locales/{zh,en}.py`
+（en 全量翻译），缺词条回落 zh 且绝不中断命令。
+
+### 9. 性能（W4）
+
+- 事件批量落盘：`aaa run --db-batch 20`（默认 20；1 = 逐条即时）——整批单事务提交，
+  阻断/fail-open/error 类重要事件始终立即落盘；JSONL 镜像语义不变；
+- 内容扫描采样：策略 `sampling: {enabled, head_bytes}`（默认关）——body 超过
+  `max_body_scan` 时非豁免扫描器只扫头部 `min(max_body_scan, head_bytes)` 字节，
+  **secrets 扫描器豁免全扫（行为不回退）**；启动时生效，改完重启；
+- SQLite WAL + synchronous=NORMAL：代理线程写与 CLI/面板读并发不互斥
+  （旧库首次打开自动迁移，无需手工操作）。
 
 ## 卸载
 

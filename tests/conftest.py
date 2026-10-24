@@ -39,6 +39,28 @@ def _force_plain_output() -> Iterator[None]:
                 os.environ[key] = value
 
 
+@pytest.fixture(autouse=True)
+def _reset_i18n_state() -> Iterator[None]:
+    """v0.3.0 波次二：每个测试前后重置 i18n 语言选择与 AAA_LANG 环境变量。
+
+    ``--lang`` 选项回调会写 i18n 模块级状态（进程内 CliRunner 复用同一进程），
+    不隔离会让某个测试的语言选择泄漏到后续测试、破坏既有中文输出断言。
+    需要测语言行为的测试在夹具内自行 setenv/monkeypatch。
+    """
+    from aaa import i18n
+
+    saved_lang = os.environ.pop("AAA_LANG", None)
+    i18n.reset_state()
+    try:
+        yield
+    finally:
+        i18n.reset_state()
+        if saved_lang is not None:
+            os.environ["AAA_LANG"] = saved_lang
+        else:
+            os.environ.pop("AAA_LANG", None)
+
+
 def free_port() -> int:
     """向系统要一个空闲 TCP 端口（测试专用，不依赖真实外网）。"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:

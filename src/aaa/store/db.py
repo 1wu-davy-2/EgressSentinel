@@ -1,9 +1,16 @@
-"""SQLite 事件库（02 文档 D6/§6，03 文档 T4.1）。
+"""SQLite 事件库（02 文档 D6/§6，03 文档 T4.1；v0.3.0 性能扩展 06 文档 W4）。
 
 - ``data/audit.db``：events 表（02 文档 §6 全字段）+ event_rules（维度/规则命中明细，
   供 dim 过滤与按规则聚合）+ access_log（面板 reveal/决策审计日志）；
-- 索引：ts / verdict / pid / host（02 文档 D6）；
+- 索引：ts / verdict / pid / host（02 文档 D6）+ W4 覆盖索引（``idx_events_ts_id``
+  供列表页免排序、``idx_event_rules_event_dim``/``idx_event_rules_rule_dim`` 供
+  dim 过滤与按规则聚合走 index-only 扫描）；
+- ``PRAGMA journal_mode=WAL`` + ``synchronous=NORMAL``（06 文档 W4）：代理线程写与
+  CLI/API 读并发不互斥；NORMAL 下应用崩溃不丢数据，断电可能丢最近事务
+  （审计可接受——事件另有 evidence/JSONL 双通道）；
 - ``append`` 即事件写入入口（与 JSONL 同签名，可经 ``mirror`` 双写收敛开关）；
+- ``insert_events(list)`` 批量落盘（06 文档 W4）：整批**单事务**提交
+  （addon 侧由波次二集成接线），失败整批回滚，mirror 在提交后按序补写；
 - ``trim(days)``：删除过期事件行并连带清理对应证据文件（启动自动清理与
   ``aaa trim --days N`` 共用本实现）；
 - 证据文件哈希管理：``verify_evidence`` 按 DB 记录复核 evidence 文件存在性与 sha256。
@@ -15,7 +22,7 @@ import hashlib
 import logging
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol
@@ -74,6 +81,9 @@ CREATE INDEX IF NOT EXISTS idx_events_ts_epoch ON events (ts_epoch);
 CREATE INDEX IF NOT EXISTS idx_events_verdict  ON events (verdict);
 CREATE INDEX IF NOT EXISTS idx_events_pid      ON events (pid);
 CREATE INDEX IF NOT EXISTS idx_events_host     ON events (host);
+-- W4 覆盖索引（06 文档 W4）：列表页 ORDER BY ts_epoch DESC, id DESC 免排序；
+-- dim 过滤/按规则聚合走 index-only 扫描（EXPLAIN QUERY PLAN 见 test_perf.py）
+CREATE INDEX IF NOT EXISTS idx_events_ts_id    ON events (ts_epoch, id);
 
 CREATE TABLE IF NOT EXISTS event_rules (
     event_id TEXT NOT NULL,
@@ -85,6 +95,8 @@ CREATE TABLE IF NOT EXISTS event_rules (
 CREATE INDEX IF NOT EXISTS idx_event_rules_dim    ON event_rules (dim);
 CREATE INDEX IF NOT EXISTS idx_event_rules_rule   ON event_rules (rule_id);
 CREATE INDEX IF NOT EXISTS idx_event_rules_event  ON event_rules (event_id);
+CREATE INDEX IF NOT EXISTS idx_event_rules_event_dim ON event_rules (event_id, dim);
+CREATE INDEX IF NOT EXISTS idx_event_rules_rule_dim  ON event_rules (rule_id, dim);
 
 CREATE TABLE IF NOT EXISTS access_log (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,6 +153,11 @@ class DbEventStore:
         with self._lock:
             # WAL：代理线程写与 CLI/API 读并发不互斥
             self._conn.execute("PRAGMA journal_mode=WAL")
+            # W4（06 文档）：synchronous=NORMAL 与 WAL 搭配——应用崩溃不丢已提交事务，
+            # 断电/系统崩溃可能丢最近提交（审计事件另有 evidence + JSONL 双通道兜底）。
+            # synchronous 是每连接生效的 PRAGMA（journal_mode 才随库文件持久化），
+            # 故每次打开都必须重设。
+            self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
             self._conn.commit()
 
@@ -163,10 +180,10 @@ class DbEventStore:
 
     # ---------------------------------------------------------------- 写入
 
-    def append(self, event: AuditEvent) -> None:
-        """写入一条事件（02 文档 §6 字段落列，完整 JSON 落 ``raw``）。"""
+    def _event_row(self, event: AuditEvent) -> tuple[Any, ...]:
+        """事件 → events 行值序（02 文档 §6 字段落列，完整 JSON 落 ``raw``）。"""
         process = event.process
-        row = (
+        return (
             event.id,
             event.ts,
             _ts_epoch(event.ts),
@@ -196,6 +213,26 @@ class DbEventStore:
             event.error,
             event.model_dump_json(),
         )
+
+    @staticmethod
+    def _rule_rows(event: AuditEvent) -> list[tuple[str, str, str, str | None, int | None]]:
+        """事件 ``matched_rules`` → event_rules 行值清单（维度/规则命中明细）。"""
+        return [
+            (
+                event.id,
+                str(rule.get("id", "")),
+                str(rule.get("dim", "")),
+                str(rule.get("action", "")) if rule.get("action") else None,
+                int(rule["weight"]) if isinstance(rule.get("weight"), int) else None,
+            )
+            for rule in event.matched_rules
+            if isinstance(rule, dict)
+        ]
+
+    def append(self, event: AuditEvent) -> None:
+        """写入一条事件（02 文档 §6 字段落列，完整 JSON 落 ``raw``）。"""
+        row = self._event_row(event)
+        rule_rows = self._rule_rows(event)
         with self._lock:
             self._conn.execute(
                 """
@@ -212,21 +249,49 @@ class DbEventStore:
             self._conn.executemany(
                 "INSERT INTO event_rules (event_id, rule_id, dim, action, weight) "
                 "VALUES (?,?,?,?,?)",
-                [
-                    (
-                        event.id,
-                        str(rule.get("id", "")),
-                        str(rule.get("dim", "")),
-                        str(rule.get("action", "")) if rule.get("action") else None,
-                        int(rule["weight"]) if isinstance(rule.get("weight"), int) else None,
-                    )
-                    for rule in event.matched_rules
-                    if isinstance(rule, dict)
-                ],
+                rule_rows,
             )
             self._conn.commit()
         if self._mirror is not None:
             self._mirror.append(event)
+
+    def insert_events(self, events: Sequence[AuditEvent]) -> int:
+        """批量落盘（06 文档 W4）：整批**单事务**提交，返回处理的事件数。
+
+        - 与逐条 :meth:`append` 的差异：全部行共用一次 ``BEGIN..COMMIT``——
+          1000 条事件的 fsync/提交开销从 N 次降为 1 次（addon 侧由波次二集成接线）；
+        - 原子性：任一行失败整批回滚（``with self._conn`` 语义），库内不留半批；
+        - ``mirror``（JSONL 双写）在 DB 提交成功后按序补写；镜像异常不回滚 DB
+          （与 :meth:`append` 同语义：落库为准）；
+        - 空清单为零开销 no-op；``INSERT OR REPLACE`` 语义与逐条一致（同 id 覆盖）。
+        """
+        if not events:
+            return 0
+        rows = [self._event_row(event) for event in events]
+        rule_rows = [row for event in events for row in self._rule_rows(event)]
+        with self._lock:
+            with self._conn:
+                self._conn.executemany(
+                    """
+                    INSERT OR REPLACE INTO events (
+                        id, ts, ts_epoch, mode, verdict, risk_score, pid, process_json,
+                        process_name, host, ip, port, classification, method, path,
+                        content_type, request_size, response_json, matched_rules,
+                        action_taken, evidence_file, evidence_sha256, evidence_truncated,
+                        evidence_size, evidence_original_size, policy_version, error, raw
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    rows,
+                )
+                self._conn.executemany(
+                    "INSERT INTO event_rules (event_id, rule_id, dim, action, weight) "
+                    "VALUES (?,?,?,?,?)",
+                    rule_rows,
+                )
+        if self._mirror is not None:
+            for event in events:
+                self._mirror.append(event)
+        return len(events)
 
     # ---------------------------------------------------------------- 读取
 

@@ -1,0 +1,78 @@
+# dev profile —— 开发机宽松档（aaa policy use dev 切换）
+# 定位：降低打扰（min_action=block，只推最严重事件），阈值放宽；仍拦截密钥外发。
+version: 1
+mode: dry-run
+defaults:
+  fail_open: true
+  max_body_scan: 1048576 # 开发机允许扫到 1MB
+
+domains:
+  classes:
+    known_ai_api:
+      - api.anthropic.com
+      - api.openai.com
+      - generativelanguage.googleapis.com
+      - api.deepseek.com
+      - api.moonshot.cn
+      - openrouter.ai
+    code_hosting:
+      - github.com
+      - api.github.com
+      - gitlab.com
+  rules:
+    - id: domain-unknown
+      match: { class: unknown }
+      action: allow # 开发机对未知域名只记录不告警
+      weight: 0
+
+processes:
+  profiles:
+    agent_cli: { exe_regex: '(?i)(claude|cursor|codex|copilot|node|python|java)' }
+  rules:
+    - id: non-agent-to-ai-api
+      match: { profile_not: agent_cli, dest_class: known_ai_api }
+      action: alert
+      weight: 30
+
+content:
+  scanners: [secrets, pii, code_leak]
+  rules:
+    - id: secret-leak
+      scanner: secrets
+      action: block
+      weight: 60
+    - id: pii-bulk
+      scanner: pii
+      match: { hits_gt: 50 } # 放宽：测试数据常含批量 PII
+      action: confirm
+      weight: 40
+
+volume:
+  - id: huge-body
+    match: { body_size_gt: 20971520 }
+    action: alert
+    weight: 20
+
+time_window:
+  - id: burst
+    match: { requests_gt: 120, window_seconds: 60 }
+    action: alert
+    weight: 20
+
+notifications:
+  min_action: block # 只推 block 级（secret-leak），日常告警不打扰
+  toast:
+    enabled: true
+  webhook:
+    enabled: false
+  email:
+    enabled: false
+  rate_limit:
+    max_per_minute: 5
+
+# 开发机关闭采样与响应标注，保持 v0.2.x 全量行为。
+sampling:
+  enabled: false
+
+hub:
+  enabled: false

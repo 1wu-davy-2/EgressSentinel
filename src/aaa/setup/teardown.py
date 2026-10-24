@@ -85,23 +85,32 @@ def restore_ca_entry(state: StateFile, entry: StateEntry) -> None:
 
 
 def teardown_target_kinds(targets: tuple[str, ...] | None) -> set[str] | None:
-    """把 CLI 目标（ca/proxy/env/autostart/firewall/all）映射到 kind 集合；None/空 = 全部。"""
+    """把 CLI 目标映射到 kind 集合；None/空 = 全部。
+
+    v0.3.0（06 文档波次二）：新增 ``service``（W1 服务任务）与 ``daily``（W6 日报
+    计划任务）目标——两模块的还原器经 ``register_restorer`` 自注册（import 即生效，
+    CLI 顶层已 import），目标映射按 decisions D-40/D-45 的预留由集成层补齐。
+    延迟导入：service/daily 模块反向 import 本模块（注册还原器），顶层导入成环。
+    """
     if not targets:
         return None
+    from aaa.reporting.daily import KIND_DAILY_REPORT_TASK  # 防循环导入：daily 反向注册还原器
+    from aaa.setup.service import KIND_SERVICE_TASK  # 防循环导入：service 反向注册还原器
+
     mapping: dict[str, set[str]] = {
         "ca": {KIND_CA_USER, KIND_CA_MACHINE},
         "proxy": {KIND_WININET, KIND_WINHTTP},
         "env": {KIND_ENV_VAR, KIND_FILE_CREATED},
         "autostart": {KIND_AUTOSTART_TASK, KIND_WATCHDOG_TASK},
         "firewall": {KIND_FIREWALL_RULE},
+        "service": {KIND_SERVICE_TASK},
+        "daily": {KIND_DAILY_REPORT_TASK},
     }
     kinds: set[str] = set()
     for target in targets:
         normalized = target.strip().lower()
         if normalized not in mapping:
-            raise ValueError(
-                f"未知 teardown 目标：{target!r}（支持 ca/proxy/env/autostart/firewall）"
-            )
+            raise ValueError(f"未知 teardown 目标：{target!r}（支持 {'/'.join(mapping)}）")
         kinds |= mapping[normalized]
     return kinds
 

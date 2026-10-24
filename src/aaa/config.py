@@ -50,6 +50,28 @@ else:
 #: 默认策略文件（03 文档 T3.1）
 DEFAULT_POLICY_FILE = DEFAULT_POLICIES_DIR / "default.yaml"
 
+#: 当前策略 profile 产物（``aaa policy use <name>`` 拷贝生成；存在即优先生效）
+CURRENT_POLICY_FILE_NAME = "current.yaml"
+
+#: 策略 profile 目录名（多 profile 示例：policies/profiles/*.yaml）
+PROFILES_DIR_NAME = "profiles"
+
+
+def default_policy_file() -> Path:
+    """当前生效的缺省策略文件：``policies/current.yaml``（``aaa policy use`` 的
+    拷贝产物）存在则优先，否则出厂 ``policies/default.yaml``。
+
+    调用期读取 :data:`DEFAULT_POLICIES_DIR`（测试可 monkeypatch 切换策略目录）；
+    ``--policy`` 显式参数永远优先于本函数（各命令自行处理）。
+    """
+    current = DEFAULT_POLICIES_DIR / CURRENT_POLICY_FILE_NAME
+    return current if current.is_file() else DEFAULT_POLICY_FILE
+
+
+def profiles_dir() -> Path:
+    """策略 profile 目录：``policies/profiles/``（调用期解析，可测试注入）。"""
+    return DEFAULT_POLICIES_DIR / PROFILES_DIR_NAME
+
 
 @dataclass(frozen=True)
 class AppPaths:
