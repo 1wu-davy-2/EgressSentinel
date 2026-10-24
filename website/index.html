@@ -9,15 +9,15 @@
 
 <!-- ===== SEO 词条：让搜索引擎/浏览器能搜到 ===== -->
 <title>EgressSentinel 出口哨兵 · AI Agent 出口流量审计与阻断工具 | AI Agent Egress Traffic Audit</title>
-<meta name="description" content="EgressSentinel（出口哨兵）是开源（MIT）的本机 AI Agent 出口流量审计代理：还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。支持 Windows / Linux / macOS。An open-source local audit proxy that inspects and blocks what AI agents send out.">
-<meta name="keywords" content="EgressSentinel,出口哨兵,AI Agent 审计,AI Agent 监控,AI Agent 流量审计,出口流量审计,外发流量监控,代码外泄检测,代码泄露防护,密钥泄露检测,密钥外发阻断,MITM 审计代理,mitmproxy,Claude Code 监控,Cursor 流量审计,Codex 审计,MCP 安全,Windows 网络审计,开源 DLP,AI 安全,ai agent audit,egress traffic audit,code exfiltration detection,secret leak prevention,LLM security,MITM audit proxy,open source DLP">
+<meta name="description" content="EgressSentinel（出口哨兵）是开源（MIT）的 AI 审计 / agent 审计工具：部署在本机的出口流量审计代理，还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发，防数据泄露。支持 Windows / Linux / macOS。An open-source AI agent audit proxy that inspects and blocks what AI agents send out.">
+<meta name="keywords" content="EgressSentinel,出口哨兵,AI审计,agent审计,AI 审计工具,AI Agent 审计,AI Agent 监控,AI Agent 流量审计,AI 编程工具监控,出口流量审计,外发流量监控,网络审计,流量监控,HTTPS 审计,抓包审计,代码外泄检测,代码泄露防护,代码防泄密,数据防泄密,数据防泄露,密钥泄露检测,密钥外发阻断,API key 泄露检测,.env 泄露,敏感信息检测,MITM 审计代理,mitmproxy,Claude Code 监控,Claude Code 安全,Cursor 流量审计,Codex 审计,Copilot 监控,Cline 审计,MCP 审计,MCP 安全,Windows 网络审计,开源 DLP,AI 安全,AI 治理,ai audit,agent audit,ai agent audit,ai agent monitor,egress traffic audit,code exfiltration detection,code leak prevention,secret leak detection,data loss prevention,LLM security,MITM audit proxy,open source DLP">
 <link rel="canonical" href="https://1wu-davy-2.github.io/EgressSentinel/">
 
 <!-- Open Graph / Twitter -->
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="EgressSentinel 出口哨兵">
 <meta property="og:title" content="EgressSentinel 出口哨兵 · 你的 AI Agent 在往哪里发送你的代码？">
-<meta property="og:description" content="本机 AI Agent 出口流量审计代理：HTTPS 明文级审计 · 进程归因 · 五维规则 · 事中阻断密钥与代码违规外发。开源 MIT。">
+<meta property="og:description" content="AI 审计 / agent 审计工具：本机部署的出口流量审计代理，HTTPS 明文级审计 · 进程归因 · 五维规则 · 事中阻断密钥与代码违规外发。开源 MIT。">
 <meta property="og:url" content="https://1wu-davy-2.github.io/EgressSentinel/">
 <meta property="og:image" content="https://1wu-davy-2.github.io/EgressSentinel/icon-512.png">
 <meta property="og:locale" content="zh_CN">
@@ -33,9 +33,9 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "EgressSentinel",
-  "alternateName": ["出口哨兵", "EgressSentinel 出口哨兵", "AI Agent 出口流量审计工具"],
-  "description": "本机 AI Agent 出口流量审计与阻断工具：MITM 还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。开源 MIT。",
-  "keywords": "AI Agent 审计, 出口流量审计, 代码外泄检测, 密钥泄露检测, MITM 审计, 开源 DLP, ai agent audit, egress audit",
+  "alternateName": ["出口哨兵", "EgressSentinel 出口哨兵", "AI审计工具", "Agent审计工具", "AI Agent 出口流量审计工具"],
+  "description": "AI 审计 / agent 审计工具：MITM 还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。开源 MIT。",
+  "keywords": "AI审计, agent审计, AI Agent 审计, AI Agent 流量监控, 代码外泄检测, 代码防泄密, 密钥泄露检测, 数据防泄密, MITM 审计, 开源 DLP, MCP 审计, ai agent audit, egress audit, code exfiltration",
   "applicationCategory": "SecurityApplication",
   "operatingSystem": "Windows, Linux, macOS",
   "programmingLanguage": "Python",
@@ -592,6 +592,10 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
         <div class="a" data-i18n="faq.a1">MIT 协议开源、完全免费。纯本地运行：事件库与证据只写在本机 <code>data/</code> 目录，保留期可配（<code>aaa trim</code>），没有任何遥测或云端组件。</div>
       </details>
       <details>
+        <summary data-i18n="faq.q0">它能审计哪些 AI 工具？算是 AI 审计 / agent 审计工具吗？</summary>
+        <div class="a" data-i18n="faq.a0">是的，EgressSentinel 就是面向本机的 <b>AI 审计 / agent 审计</b>工具：只要流量经过本机代理即可审计——Claude Code、Cursor、Codex、GitHub Copilot、Cline、Windsurf 等编程 Agent、MCP 服务，乃至任意联网程序都覆盖，不挑工具、无需接入 SDK。典型场景：审计 AI 编程工具是否私自上传代码 / .env / API key，做数据防泄密与代码防泄密。</div>
+      </details>
+      <details>
         <summary data-i18n="faq.q2">为什么某个 AI Agent 的流量没被捕获？</summary>
         <div class="a" data-i18n="faq.a2">Node.js 系工具（Claude Code、Cursor CLI 等）默认不读系统代理和 Windows 证书库。执行过 <code>aaa setup env</code>（注入 <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code> 等）并<b>重启该 Agent 进程</b>即可；Python 系对应 <code>REQUESTS_CA_BUNDLE</code>。追求全覆盖可用需管理员的 local 模式（WinDivert 透明抓取）。</div>
       </details>
@@ -778,6 +782,8 @@ var I18N_EN = {
   "faq.eyebrow": "FAQ", "faq.h2": "Questions? Answered.",
   "faq.q1": "Is EgressSentinel free? Where does my data go?",
   "faq.a1": "Open source under MIT, completely free. It runs locally: the event store and evidence stay in the local <code>data/</code> directory with configurable retention (<code>aaa trim</code>) — no telemetry, no cloud components.",
+  "faq.q0": "Which AI tools can it audit? Is it an AI audit / agent audit tool?",
+  "faq.a0": "Yes — EgressSentinel is a local <b>AI audit / agent audit</b> tool: anything that goes through the local proxy can be audited. Coding agents like Claude Code, Cursor, Codex, GitHub Copilot, Cline and Windsurf, MCP servers, and any networked program — tool-agnostic, no SDK integration. Typical use cases: auditing whether AI coding tools secretly upload code / .env / API keys, for code-leak and data-loss prevention.",
   "faq.q2": "Why isn't a certain AI agent's traffic captured?",
   "faq.a2": "Node.js tools (Claude Code, Cursor CLI, …) ignore the system proxy and the Windows cert store by default. Run <code>aaa setup env</code> (injects <code>NODE_USE_ENV_PROXY</code> / <code>NODE_EXTRA_CA_CERTS</code>) and <b>restart the agent process</b>; for Python it's <code>REQUESTS_CA_BUNDLE</code>. For full coverage use the admin-only local mode (transparent WinDivert capture).",
   "faq.q3": "Will it slow down my network?",
