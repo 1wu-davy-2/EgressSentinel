@@ -110,6 +110,18 @@ aaa run 的策略默认 policies/default.yaml（mode: dry-run 出厂默认）
                                    确认无误后把 mode 改为 enforce 才会真实阻断（403）
 ```
 
+## 常驻与自愈（关机不断网）
+
+针对「突发关机 → 开机后代理没跑 → 全机断网」的 VPN 式残留问题，v0.1.1 起三层防护：
+
+| 层 | 机制 | 命令 |
+|---|---|---|
+| 优雅退出 | Windows 关机/注销/控制台关闭事件触发限时收尾（4s < 系统 5s 上限，绝不阻塞关机）；事件库每事件事务落盘，强退不丢数据 | `aaa run` 内置 |
+| 开机自启 | 登录计划任务自动拉起 `aaa run`（`aaa setup` 最后一步默认询问，默认安装；日志 `data/autostart.log`） | `aaa autostart on / off / status` |
+| 自检自愈 | 登录 30 秒后 watchdog 检测「代理已启用但 127.0.0.1:8080 不可达」，`--fix` 自动还原代理设置与代理环境变量（CA 无害保留），网络立刻恢复（日志 `data/watchdog.log`） | `aaa watchdog [--fix]` |
+
+`aaa status` 已内置自检预警与自启任务状态；`aaa teardown` 会连计划任务一并还原。
+
 ## 卸载
 
 ```text
@@ -135,6 +147,8 @@ aaa teardown              # 按改动日志逆序幂等还原：删除 CA（按�
 2. 发布新版本：`git tag v0.1.0 && git push --tags`，Release 页会自动出现六个平台的单文件产物。
 
 ## 常见问题
+
+- **突然关机后开机「断网」怎么办？** 系统代理仍指向 127.0.0.1:8080 而代理没跑。装了自启：开机自动起代理，起不来 watchdog 会在登录 30 秒后自动还原代理设置（网络自愈）。手动恢复一条命令：`aaa watchdog --fix`（或 `aaa teardown proxy`）。
 
 - **某个 Agent 的流量没被捕获？** Node.js 系工具默认不读系统代理与系统证书，必须执行过 `aaa setup env`（注入 `NODE_USE_ENV_PROXY` / `NODE_EXTRA_CA_CERTS`）并**重启该 Agent 进程**；Python 系对应 `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE`。
 - **看到 CERTIFICATE_VERIFY_FAILED？** 目标进程未信任本工具 CA——确认对应运行时的环境变量已下发。

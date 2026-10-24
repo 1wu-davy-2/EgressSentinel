@@ -12,6 +12,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from aaa.setup.autostart import (
+    KIND_AUTOSTART_TASK,
+    KIND_WATCHDOG_TASK,
+    restore_scheduled_task,
+)
 from aaa.setup.envvars import (
     KIND_ENV_VAR,
     KIND_FILE_CREATED,
@@ -49,12 +54,14 @@ class TeardownReport:
         return not self.failed
 
 
-#: kind → 还原函数；CA 的还原在 ca 记录模块注册（cli/setup 流程内），此处先登记通用四类
+#: kind → 还原函数；CA 的还原在 ca 记录模块注册（cli/setup 流程内），此处先登记通用六类
 RESTORERS: dict[str, Restorer] = {
     KIND_ENV_VAR: restore_user_envvar,
     KIND_FILE_CREATED: restore_file_created,
     KIND_WININET: restore_user_proxy,
     KIND_WINHTTP: restore_winhttp_proxy,
+    KIND_AUTOSTART_TASK: restore_scheduled_task,
+    KIND_WATCHDOG_TASK: restore_scheduled_task,
 }
 
 
@@ -82,12 +89,13 @@ def teardown_target_kinds(targets: tuple[str, ...] | None) -> set[str] | None:
         "ca": {KIND_CA_USER, KIND_CA_MACHINE},
         "proxy": {KIND_WININET, KIND_WINHTTP},
         "env": {KIND_ENV_VAR, KIND_FILE_CREATED},
+        "autostart": {KIND_AUTOSTART_TASK, KIND_WATCHDOG_TASK},
     }
     kinds: set[str] = set()
     for target in targets:
         normalized = target.strip().lower()
         if normalized not in mapping:
-            raise ValueError(f"未知 teardown 目标：{target!r}（支持 ca/proxy/env）")
+            raise ValueError(f"未知 teardown 目标：{target!r}（支持 ca/proxy/env/autostart）")
         kinds |= mapping[normalized]
     return kinds
 

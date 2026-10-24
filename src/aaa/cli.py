@@ -24,7 +24,12 @@ from rich.table import Table
 from aaa import __version__
 from aaa.attribution.table import ProcessAttributor, resolve_pinned_process
 from aaa.capture.addon import AuditAddon
-from aaa.capture.engine import CaptureEngine, ProxyConfig, _validate_mode
+from aaa.capture.engine import (
+    CaptureEngine,
+    ProxyConfig,
+    _validate_mode,
+    install_shutdown_handlers,
+)
 from aaa.config import (
     DEFAULT_LISTEN_HOST,
     DEFAULT_LISTEN_PORT,
@@ -36,10 +41,12 @@ from aaa.config import (
 )
 from aaa.engine.pipeline import AuditPipeline
 from aaa.policy.loader import PolicyError, PolicyLoader
+from aaa.setup import autostart as autostart_mod
 from aaa.setup import ca as ca_mod
 from aaa.setup import envvars as envvars_mod
 from aaa.setup import proxy as proxy_mod
 from aaa.setup import teardown as teardown_mod
+from aaa.setup import watchdog as watchdog_mod
 from aaa.setup.admin import is_current_process_elevated
 from aaa.setup.state import StateFile
 from aaa.setup.wizard import collect_setup_plans, run_setup_wizard
@@ -59,6 +66,10 @@ setup_app = typer.Typer(
 app.add_typer(setup_app, name="setup")
 policy_app = typer.Typer(no_args_is_help=True, help="策略文件管理与校验")
 app.add_typer(policy_app, name="policy")
+autostart_app = typer.Typer(
+    no_args_is_help=True, help="开机自启计划任务（aaa run + 登录自检 watchdog）"
+)
+app.add_typer(autostart_app, name="autostart")
 
 console = Console()
 err_console = Console(stderr=True)
@@ -125,8 +136,16 @@ def run(
         min=0,
         help="事件保留天数（启动自动清理；默认 14 或 AAA_RETENTION_DAYS）",
     ),
+    log_file: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
+        None,
+        "--log-file",
+        help="启动/退出信息镜像写入该文件（开机自启等无控制台场景排障用）",
+    ),
 ) -> None:
-    """启动采集代理（阻塞运行，Ctrl+C 优雅退出）。事件落 SQLite（02 文档 D6）。"""
+    """启动采集代理（阻塞运行；Ctrl+C 优雅退出；关机/注销自动限时收尾）。
+
+    事件落 SQLite（02 文档 D6）。
+    """
     is_local = mode == "local" or mode.startswith("local:")
     if (pid is not None or process is not None) and not is_local:
         raise typer.BadParameter("--pid/--process 仅支持 --mode local")
@@ -195,11 +214,35 @@ def run(
             f"启动自动清理：删除 {trimmed['events']} 条过期事件"
             f"（保留期 {retention} 天，连带证据 {trimmed['evidence']} 个）"
         )
-    console.print("按 Ctrl+C 优雅退出。")
+    console.print("按 Ctrl+C 优雅退出；关机/注销时自动限时收尾（不阻塞系统关机）。")
+    if log_file is not None:
+        _append_log(
+            log_file,
+            f"aaa {__version__} 启动 mode={mode_spec} listen={host}:{port} "
+            f"policy={policy_loader.path}({policy_loader.current.mode})",
+        )
+    stop_cb = getattr(engine, "stop", None)
+    if callable(stop_cb):
+        install_shutdown_handlers(stop_cb)
     try:
         engine.run_blocking()
     finally:
         store.close()
+        if log_file is not None:
+            _append_log(log_file, "aaa 已停止（正常退出或收到关机信号）")
+
+
+def _append_log(log_file: Path, message: str) -> None:
+    """追加一行带时间戳的运行日志（无控制台场景的排障通道，失败静默）。"""
+    from datetime import datetime
+
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().astimezone().isoformat(timespec="seconds")
+        with log_file.open("a", encoding="utf-8") as fh:
+            fh.write(f"{ts}\t{message}\n")
+    except OSError:  # noqa: BLE001 - 日志失败不影响主流程
+        pass
 
 
 def _local_mode_spec(mode: str, pid: int | None, process: str | None) -> str:
@@ -255,6 +298,20 @@ def setup(
     )
     confirm: Callable[[str], bool] = (lambda _msg: True) if yes else typer.confirm
     run_setup_wizard(plans, confirm=confirm, echo=console.print, dry_run=dry_run)
+    if not dry_run and StateFile(paths.setup_state_file).entries():
+        # 用户需求：setup 默认附带开机自启（可拒绝；改动同样 journal-first）。
+        # 全部步骤都被拒绝时不追问（保持「零改动」语义）。
+        task_name = autostart_mod.AUTOSTART_TASK_NAME
+        if confirm(f"安装开机自启与看门狗计划任务（{task_name} 等 2 项）？"):
+            state = StateFile(paths.setup_state_file)
+            try:
+                entries = autostart_mod.enable_autostart(state, paths.data_dir)
+            except autostart_mod.AutostartError as exc:
+                hint = "可稍后 aaa autostart on 重试"
+                err_console.print(f"[red]自启任务创建失败：{exc}[/red]（{hint}）")
+            else:
+                for entry in entries:
+                    console.print(f"[green]已创建计划任务[/green] {entry.key}")
 
 
 @setup_app.command("ca")
@@ -401,6 +458,91 @@ def teardown(
 
 
 # --------------------------------------------------------------------------
+# autostart / watchdog（v0.1.1：关机优雅退出 + 开机自启 + 自检自愈）
+# --------------------------------------------------------------------------
+
+
+@autostart_app.command("on")
+def autostart_on(
+    data_dir: Path | None = DataDirOpt,
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认（自动化用）"),
+) -> None:
+    """创建两个登录计划任务：aaa run 常驻 + watchdog 自检（--fix 断网自动还原）。"""
+    paths = resolve_paths(data_dir)
+    cmd, args = autostart_mod.autostart_command(paths.data_dir)
+    wcmd, wargs = autostart_mod.watchdog_command(paths.data_dir)
+    console.print("将创建 2 个当前用户级计划任务（登录时触发，改动记入 setup-state.json）：")
+    console.print(f"  1) {autostart_mod.AUTOSTART_TASK_NAME}：{cmd} {' '.join(args)}")
+    console.print(
+        f"  2) {autostart_mod.WATCHDOG_TASK_NAME}（延迟 {autostart_mod.WATCHDOG_DELAY_SECONDS}s）："
+        f"{wcmd} {' '.join(wargs)}"
+    )
+    if not yes and not typer.confirm("确认创建？", default=True):
+        console.print("已取消。")
+        raise typer.Exit()
+    state = StateFile(paths.setup_state_file)
+    try:
+        entries = autostart_mod.enable_autostart(state, paths.data_dir)
+    except autostart_mod.AutostartError as exc:
+        err_console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    for entry in entries:
+        console.print(f"[green]已创建计划任务[/green] {entry.key}")
+    console.print(
+        "效果：开机自动起代理；若自启失败/进程被杀，登录 30s 后 watchdog 自动还原代理设置，"
+        "避免「开机断网」。"
+    )
+
+
+@autostart_app.command("off")
+def autostart_off(data_dir: Path | None = DataDirOpt) -> None:
+    """删除自启与看门狗计划任务（幂等；不影响其余 setup 改动）。"""
+    paths = resolve_paths(data_dir)
+    removed = autostart_mod.disable_autostart(StateFile(paths.setup_state_file))
+    label = ", ".join(removed) if removed else "（本来就不存在）"
+    console.print(f"[green]已删除计划任务并清理记录[/green]：{label}")
+
+
+@autostart_app.command("status")
+def autostart_status() -> None:
+    """查看自启/看门狗计划任务是否已安装。"""
+    for name in (autostart_mod.AUTOSTART_TASK_NAME, autostart_mod.WATCHDOG_TASK_NAME):
+        installed = autostart_mod.task_exists(name)
+        console.print(f"{name}：{'已安装' if installed else '未安装'}")
+
+
+@app.command()
+def watchdog(
+    fix: bool = typer.Option(
+        False, "--fix", help="断网态自动还原代理设置与代理环境变量（CA 无害保留）"
+    ),
+    wait: float = typer.Option(
+        20.0, "--wait", min=0.0, help="端口有界等待秒数（登录竞态保护）"
+    ),
+    data_dir: Path | None = DataDirOpt,
+    log_file: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
+        None, "--log-file", help="自检日志文件（默认 data/watchdog.log）"
+    ),
+) -> None:
+    """开机自检：检测「系统代理已启用但本机代理端口不可达」的断网态（--fix 自动还原）。"""
+    paths = resolve_paths(data_dir)
+    report = watchdog_mod.run_watchdog(
+        paths.setup_state_file,
+        fix=fix,
+        wait_seconds=wait,
+        log_path=log_file or (paths.data_dir / "watchdog.log"),
+    )
+    style = {"idle": "dim", "ok": "green", "degraded": "bold red", "recovered": "yellow"}[
+        report.status
+    ]
+    console.print(f"[{style}]自检：{report.status}[/{style}]  {report.detail}")
+    for action in report.actions:
+        console.print(f"  - 已还原 {action}")
+    if report.status == "degraded":
+        raise typer.Exit(code=1)  # 供计划任务/脚本感知断网态
+
+
+# --------------------------------------------------------------------------
 # status / tail / report / trim（03 文档 T4.2）
 # --------------------------------------------------------------------------
 
@@ -513,6 +655,30 @@ def status(
             f"[yellow]注意：状态文件有 {len(entries)} 项未还原改动（崩溃残留或未 teardown），"
             f"运行 aaa teardown 还原。[/yellow]"
         )
+
+    # —— 开机自检（v0.1.1：代理已启用但端口不可达 = 断网态预警）——
+    try:
+        self_check = watchdog_mod.run_watchdog(
+            paths.setup_state_file,
+            fix=False,
+            wait_seconds=0.0,
+            log_path=paths.data_dir / "watchdog.log",
+        )
+        if self_check.status == "degraded":
+            console.print(
+                "[bold red]自检异常：系统代理仍启用但代理端口不可达（应用会『断网』）。"
+                "恢复：aaa watchdog --fix / aaa teardown proxy / 重新 aaa run[/bold red]"
+            )
+    except Exception as exc:  # noqa: BLE001 - 状态命令不因自检失败中断
+        console.print(f"(自检跳过：{exc})")
+
+    # —— 开机自启任务状态 ——
+    try:
+        auto_installed = autostart_mod.task_exists(autostart_mod.AUTOSTART_TASK_NAME)
+        hint = "aaa autostart off 关闭" if auto_installed else "aaa autostart on 开启"
+        console.print(f"开机自启：{'已安装' if auto_installed else '未安装'}（{hint}）")
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"(开机自启状态读取失败：{exc})")
 
 
 def _process_label(event: Any) -> str:

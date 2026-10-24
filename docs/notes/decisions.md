@@ -283,4 +283,29 @@
 - 结果：Windows amd64（py3.11/3.12）严格门禁绿；Lint 绿；Linux/macOS/wind-arm64
   任务为实验层，缺口以显式 skip 呈现而非红错；Release v0.1.0 五平台可执行文件发布。
 
+## D-2026-10-24-31 · v0.1.1 常驻与自愈（关机不断网三件套）
+
+- 背景（用户问题）：setup 持久写 WinINET 代理指向 127.0.0.1:8080；突发关机后
+  若自启失败/进程未跑，遵循系统代理的应用「断网」——与 VPN 残留同类。
+- 实现：
+  1) **优雅退出**（capture/engine.py）：SetConsoleCtrlHandler 接管
+     CTRL_CLOSE(2)/CTRL_LOGOFF(5)/CTRL_SHUTDOWN(6)，stop 在后台线程限时 4s
+     （< 系统 5s 上限）执行，超时 os._exit(0) 绝不阻塞关机；Ctrl+C(0) 不接管，
+     仍走 KeyboardInterrupt 原路径；回调引用模块级保活防 GC；POSIX 对应 SIGTERM。
+  2) **开机自启**（setup/autostart.py）：两个当前用户级登录计划任务（XML 定义，
+     journal-first，schtasks 全经可注入 `_run_schtasks`）——AutoStart（venv 用
+     pythonw 无窗口 / frozen 用 cmd start /min）跑 `aaa run --log-file`；
+     Watchdog 延迟 30s 跑 `aaa watchdog --fix`。`aaa setup` 末步默认询问安装
+     （全拒场景不追问）；`aaa autostart on/off/status` 独立管理；teardown 新增
+     `autostart` 目标整体还原。
+  3) **自检自愈**（setup/watchdog.py）：三态判定 idle/ok/degraded（从 journal 的
+     WinINET 记录解析端点；含登录竞态有界等待）；degraded 时 `--fix` 还原网络类
+     改动（WinINET/WinHTTP + 代理环境变量，CA 无害保留），等价 `teardown proxy env`；
+     日志 data/watchdog.log；`aaa status` 内置预警与自启任务状态。
+- 测试：test_autostart（假 schtasks：创建/journal/幂等删/teardown 还原/缺失容忍）、
+  test_watchdog（三态矩阵 + fix 调用 kinds 断言 + 登录竞态不误还原）、
+  test_shutdown_handlers（事件映射 + 引用保活）；run 命令对 stop 做防御式获取
+  （getattr）兼容注入的假引擎。
+- 版本：0.1.0 → 0.1.1（含官网文案同步）。
+
 

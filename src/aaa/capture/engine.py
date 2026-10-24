@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 import socket
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -66,6 +68,66 @@ def _validate_mode(mode: str) -> str:
         # local 需要管理员（02 文档 D1；调用方负责权限检查，见 aaa.setup.admin）
         return mode
     raise ValueError(f"不支持的代理模式：{mode!r}（支持 regular / local[:spec]）")
+
+
+# --------------------------------------------------------------------------
+# 优雅退出：Windows 关机/注销/控制台关闭（用户需求：突发关机不得阻塞、不得残留半写状态）
+# --------------------------------------------------------------------------
+
+_CTRL_CLOSE_EVENT = 2
+_CTRL_LOGOFF_EVENT = 5
+_CTRL_SHUTDOWN_EVENT = 6
+
+#: SetConsoleCtrlHandler 回调引用必须保活（防 GC 导致失效）
+_HANDLER_REFS: list[Any] = []
+
+
+def is_shutdown_event(ctrl_type: int) -> bool:
+    """是否为需要接管优雅退出的控制台事件。
+
+    Ctrl+C（0）不在此列——仍走 KeyboardInterrupt 原路径；CTRL_BREAK(1) 交给
+    默认处理。接管 2/5/6：关机、注销、控制台关闭（点 X 关窗口）。
+    """
+    return ctrl_type in (_CTRL_CLOSE_EVENT, _CTRL_LOGOFF_EVENT, _CTRL_SHUTDOWN_EVENT)
+
+
+def _bounded_exit(on_stop: Callable[[], None], timeout: float) -> None:
+    """后台线程限时执行 stop：Windows 关机只给约 5 秒，超时强制退出绝不阻塞。"""
+    thread = threading.Thread(target=on_stop, daemon=True)
+    thread.start()
+    thread.join(timeout)
+    os._exit(0)
+
+
+def install_shutdown_handlers(on_stop: Callable[[], None], timeout: float = 4.0) -> None:
+    """注册关机/注销/控制台关闭的优雅退出（POSIX 上对应 SIGTERM）。
+
+    stop 在独立线程限时执行（默认 4s < 系统 5s 上限），到点 ``os._exit(0)``；
+    事件库 SQLite 每事件事务落盘，强退不丢已入库数据。
+    """
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        def _dispatch(ctrl_type: int) -> bool:
+            if not is_shutdown_event(ctrl_type):
+                return False  # 交给默认处理（含 mitmproxy 自身的 Ctrl+C）
+            threading.Thread(
+                target=_bounded_exit, args=(on_stop, timeout), daemon=True
+            ).start()
+            return True  # 已接管，阻止默认立即终止
+
+        handler = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)(_dispatch)
+        if not ctypes.windll.kernel32.SetConsoleCtrlHandler(handler, True):
+            logger.warning("SetConsoleCtrlHandler 注册失败，关机时退化为默认终止")
+        _HANDLER_REFS.append(handler)
+        logger.debug("已注册控制台关机优雅退出处理器")
+    else:
+
+        def _sig_handler(signum: int, _frame: object) -> None:
+            _bounded_exit(on_stop, timeout)
+
+        signal.signal(signal.SIGTERM, _sig_handler)
 
 
 class CaptureEngine:
