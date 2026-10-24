@@ -29,8 +29,8 @@ jobs:
     name: py${{ matrix.python }} · ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runs-on }}
     continue-on-error: ${{ matrix.experimental }}
-    fail-fast: false
     strategy:
+      fail-fast: false
       matrix:
         include:
           # Windows amd64（一等平台，严格门禁）

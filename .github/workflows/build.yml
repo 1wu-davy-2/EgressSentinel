@@ -15,8 +15,8 @@ jobs:
     name: ${{ matrix.os }}-${{ matrix.arch }}
     runs-on: ${{ matrix.runs-on }}
     continue-on-error: ${{ matrix.experimental }}
-    fail-fast: false
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { runs-on: windows-latest, os: windows, arch: amd64, experimental: false }
