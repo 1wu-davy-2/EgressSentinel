@@ -48,6 +48,23 @@
 }
 </script>
 
+<!-- 结构化数据：FAQ 富卡片（与页面可见 FAQ 一致） -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {"@type": "Question", "name": "EgressSentinel 是免费的吗？数据会上传到哪里？", "acceptedAnswer": {"@type": "Answer", "text": "MIT 协议开源、完全免费。纯本地运行：事件库与证据只写在本机 data/ 目录，保留期可配，没有任何遥测或云端组件。"}},
+    {"@type": "Question", "name": "它能审计哪些 AI 工具？算是 AI 审计 / agent 审计工具吗？", "acceptedAnswer": {"@type": "Answer", "text": "是的，EgressSentinel 是面向本机的 AI 审计 / agent 审计工具：Claude Code、Cursor、Codex、GitHub Copilot、Cline、Windsurf 等编程 Agent、MCP 服务乃至任意联网程序都可审计，不挑工具、无需接入 SDK。"}},
+    {"@type": "Question", "name": "为什么某个 AI Agent 的流量没被捕获？", "acceptedAnswer": {"@type": "Answer", "text": "Node.js 系工具默认不读系统代理和 Windows 证书库。执行 aaa setup env（注入 NODE_USE_ENV_PROXY / NODE_EXTRA_CA_CERTS 等）并重启该 Agent 进程即可；Python 系对应 REQUESTS_CA_BUNDLE。"}},
+    {"@type": "Question", "name": "它会拖慢我的网络吗？", "acceptedAnswer": {"@type": "Answer", "text": "regular 模式是本地回环代理，无云端往返；内容扫描默认只处理每个请求的前 256KB；非审计目标域名跳过 body 扫描。"}},
+    {"@type": "Question", "name": "杀毒软件报警了怎么办？", "acceptedAnswer": {"@type": "Answer", "text": "本地代理 + 安装根证书对应 MITRE ATT&CK T1553.004，属预期行为。regular 模式不加载任何驱动；本工具不隐藏自身行为，并提供完整卸载。"}},
+    {"@type": "Question", "name": "如何完全卸载？", "acceptedAnswer": {"@type": "Answer", "text": "一条命令 aaa teardown：按改动日志逆序幂等还原——删除 CA（按序列号精确匹配）、还原系统代理设置、清理全部环境变量；崩溃后重启执行仍完整还原。"}},
+    {"@type": "Question", "name": "支持 Linux / macOS 吗？", "acceptedAnswer": {"@type": "Answer", "text": "v0.1.0 已发布五平台单文件可执行（Linux amd64/arm64、macOS amd64/arm64、Windows amd64）。Windows 是一等平台；Linux/macOS 的进程归因依赖特权会话。"}}
+  ]
+}
+</script>
+
 <!-- ===== 图标 ===== -->
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
