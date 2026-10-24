@@ -1,8 +1,12 @@
-"""五维求值管线（02 文档 D4，03 文档 T3.2）。
+"""五维求值管线（02 文档 D4，03 文档 T3.2；v0.2.0 安全深化扩展）。
 
-维度：domain（分类 + unknown 首连）、process（画像）、content（secrets/pii/code_leak）、
-volume（体量）、time_window（进程×域名滑动窗口速率）。
+维度：domain（分类 + unknown 首连）、process（画像）、content（secrets/pii/code_leak/
+repo_fingerprint）、volume（体量）、time_window（进程×域名滑动窗口速率）。
 动作四级取最高，``risk_score = min(100, Σ weight)``；引擎异常按 ``fail_open`` 放行或阻断。
+
+v0.2.0（05 文档波次二）：新增响应侧求值 :meth:`AuditPipeline.evaluate_response`
+（注入特征扫描 + response 规则，仅 alert 级标注、绝不阻断）与 ``repo_fingerprint``
+内容扫描器（本地仓库指纹比对，命中清单附进事件 matched_rules 的 extra）。
 """
 
 from __future__ import annotations
@@ -20,11 +24,13 @@ from aaa.engine.verdict import (
     DIM_CONTENT,
     DIM_DOMAIN,
     DIM_PROCESS,
+    DIM_RESPONSE,
     DIM_TIME_WINDOW,
     DIM_VOLUME,
     EvaluationResult,
     MatchedRule,
 )
+from aaa.fingerprint import FingerprintIndex
 from aaa.policy.loader import PolicyLoader
 from aaa.policy.model import (
     ContentRule,
@@ -32,7 +38,8 @@ from aaa.policy.model import (
     PolicyDocument,
 )
 from aaa.scanners import scan_code_leak, scan_pii, scan_secrets
-from aaa.scanners.base import ScanResult
+from aaa.scanners.base import ScanHit, ScanResult
+from aaa.scanners.injection import InjectionHit, scan_injection, worst_severity
 from aaa.store.events import ProcessInfo
 
 logger = logging.getLogger(__name__)
@@ -45,6 +52,92 @@ BUILTIN_SCANNERS: dict[str, ScannerFn] = {
     "pii": scan_pii,
     "code_leak": scan_code_leak,
 }
+
+#: 仓库指纹扫描器注册名（policy content.scanners 引用；策略未启用指纹时不注册）
+FINGERPRINT_SCANNER_NAME = "repo_fingerprint"
+
+#: repo_fingerprint 扫描器的规则 id（事件 matched_rules[].id 中的扫描器规则名）
+FINGERPRINT_RULE_ID = "repo-fingerprint-hit"
+
+
+def make_fingerprint_scanner(index: FingerprintIndex) -> ScannerFn:
+    """把 :class:`FingerprintIndex` 包装成管线扫描器（05 文档波次二 §2）。
+
+    - 命中 → ``ScanHit``：``evidence`` 用指纹模块的 snippet（80 字符、空白已压缩，
+      W1 红线：事件/通知外发不携带更长原文）；``extra`` 携带结构化命中位置
+      （repo/file/line），供事件 evidence 附指纹命中清单；
+    - ``max_bytes`` 与其他扫描器同语义：先截断再比对（build 与 scan 共用
+      ``iter_slices`` 切片规范，截断只影响参与比对的尾部）；
+    - 空索引/无命中 → 空 ScanResult，绝不抛异常（扫描异常由管线 fail_open 兜底）。
+    """
+
+    def scan_fingerprint(body: bytes | str | None, max_bytes: int | None = None) -> ScanResult:
+        if not body:
+            return ScanResult(scanner=FINGERPRINT_SCANNER_NAME)
+        text = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else body
+        if max_bytes is not None and len(text) > max_bytes:
+            text = text[:max_bytes]
+        try:
+            hits = index.scan_body(text)
+        except Exception as exc:  # noqa: BLE001 - 扫描异常交由管线 fail_open 处理
+            raise RuntimeError(f"fingerprint scan: {exc}") from exc
+        scan_hits = tuple(
+            ScanHit(
+                FINGERPRINT_SCANNER_NAME,
+                FINGERPRINT_RULE_ID,
+                hit.snippet,
+                hit.line,
+                f"{hit.repo}/{hit.file}:{hit.line}",
+                {"repo": hit.repo, "file": hit.file, "line": hit.line},
+            )
+            for hit in hits
+        )
+        return ScanResult(
+            scanner=FINGERPRINT_SCANNER_NAME,
+            hits=scan_hits,
+            metrics={"hits": float(len(scan_hits))},
+        )
+
+    return scan_fingerprint
+
+
+def _fingerprint_hit_dict(hit: ScanHit) -> dict[str, Any]:
+    """``ScanHit``（repo_fingerprint）→ 事件 ``extra.fingerprint_hits`` 条目。
+
+    snippet 已由指纹模块截断 80 字符（W1 红线：事件外发不携带更长原文）。
+    """
+    return {
+        "repo": hit.extra.get("repo"),
+        "file": hit.extra.get("file"),
+        "line": hit.extra.get("line"),
+        "snippet": hit.evidence,
+    }
+
+
+@dataclass(frozen=True)
+class ResponseFinding:
+    """一次响应侧求值结果（05 文档波次二 §2）。
+
+    响应侧**只有 alert 级标注**：``matched`` 里的规则 action 恒为 alert、weight 恒
+    为 0——不参与阻断，也不抬高 risk_score；``hits`` 为注入特征原始命中（含严重
+    度与类别，供事件/诊断展示）。
+    """
+
+    matched: tuple[MatchedRule, ...] = ()
+    hits: tuple[InjectionHit, ...] = ()
+    worst_severity: str | None = None
+    """命中特征的最高严重度（low|medium|high）；无命中为 None。"""
+
+    @property
+    def verdict(self) -> str:
+        """本次响应侧判定的动作（恒 alert 或 allow，绝不 confirm/block）。"""
+        if not self.matched:
+            return "allow"
+        return "alert"
+
+    @property
+    def has_findings(self) -> bool:
+        return bool(self.matched)
 
 
 @dataclass(frozen=True)
@@ -68,11 +161,18 @@ class AuditPipeline:
         *,
         scanners: Mapping[str, ScannerFn] | None = None,
         clock: Callable[[], float] = time.monotonic,
+        fingerprint_index: FingerprintIndex | None = None,
     ) -> None:
         self.loader = policy_loader
         self._scanners: dict[str, ScannerFn] = (
             dict(scanners) if scanners else dict(BUILTIN_SCANNERS)
         )
+        if fingerprint_index is not None and FINGERPRINT_SCANNER_NAME not in self._scanners:
+            # 05 文档波次二 §2：策略启用指纹且拿到索引时注册 repo_fingerprint 扫描器
+            # （测试显式注入的同名扫描器优先——注入面优先于自动装配）
+            self._scanners[FINGERPRINT_SCANNER_NAME] = make_fingerprint_scanner(
+                fingerprint_index
+            )
         self._clock = clock
         self._lock = threading.Lock()
         self._seen_hosts: set[str] = set()
@@ -124,6 +224,69 @@ class AuditPipeline:
                 verdict="block", risk_score=100, matched=tuple(matched), error=error
             )
         return EvaluationResult.from_matched(matched)
+
+    # ------------------------------------------------------- 响应侧求值（v0.2.0）
+
+    def evaluate_response(
+        self,
+        text: bytes | str | None,
+        *,
+        policy: PolicyDocument | None = None,
+    ) -> ResponseFinding:
+        """响应侧求值（05 文档波次二 §2/§3）：注入特征扫描 + response 规则标注。
+
+        - 扫描注入特征（``scanners.injection``，纯 regex/启发式、无网络）；
+        - 命中后按 ``policy.response.rules`` 生成标注规则：``patterns="all"`` 对任何
+          命中标注；``"high"`` 仅当最高严重度为 high；
+        - **红线**：产出的规则 action 恒为 alert、weight 恒为 0——响应侧只标注、
+          绝不阻断响应（05 文档波次二 §3），本方法任何路径都不会产出 block/confirm；
+        - 策略/扫描异常一律收敛为"无命中"返回（fail-open，响应侧标注绝不影响代理）；
+        - ``evidence`` 取首条命中片段（W4 模块已做 80 字符截断 + 不可见字符显性化）。
+        """
+        try:
+            doc = policy if policy is not None else self.policy
+            hits = scan_injection(text, max_bytes=doc.defaults.max_body_scan)
+        except Exception:  # noqa: BLE001 - 响应侧标注 fail-open（波次二 §3）
+            logger.exception("响应侧注入扫描异常（fail-open）")
+            return ResponseFinding()
+        if not hits:
+            return ResponseFinding()
+        worst = worst_severity(hits)
+        first_evidence = hits[0].evidence
+        summary = ", ".join(dict.fromkeys(h.pattern for h in hits[:5]))
+        suffix = f" (+{len(hits) - 1} more)" if len(hits) > 5 else ""
+        matched: list[MatchedRule] = []
+        for rule in doc.response.rules:
+            if rule.patterns == "high" and worst != "high":
+                continue
+            matched.append(
+                MatchedRule(
+                    id=rule.id,
+                    dim=DIM_RESPONSE,
+                    action="alert",
+                    weight=0,
+                    evidence=first_evidence,
+                    detail=(
+                        f"injection hits={len(hits)}, worst={worst}, "
+                        f"patterns={rule.patterns}: {summary}{suffix}"
+                    ),
+                    extra={
+                        "worst_severity": worst,
+                        "hit_count": len(hits),
+                        "hits": [
+                            {
+                                "pattern": h.pattern,
+                                "severity": h.severity,
+                                "category": h.category,
+                                "evidence": h.evidence,
+                                "line": h.line,
+                            }
+                            for h in hits[:10]
+                        ],
+                    },
+                )
+            )
+        return ResponseFinding(matched=tuple(matched), hits=tuple(hits), worst_severity=worst)
 
     # ------------------------------------------------------- 域阻断快速通道
 
@@ -235,20 +398,10 @@ class AuditPipeline:
                 raise RuntimeError(f"scanner {scanner_name}: {exc}") from exc
         matched: list[MatchedRule] = []
         for rule in policy.content.rules:
-            hits = self._content_rule_hits(rule, inp, results)
-            if hits is None:
+            rule_match = self._content_rule_hits(rule, inp, results)
+            if rule_match is None:
                 continue
-            evidence, detail = hits
-            matched.append(
-                MatchedRule(
-                    id=rule.id,
-                    dim=DIM_CONTENT,
-                    action=rule.action,
-                    weight=rule.weight,
-                    evidence=evidence,
-                    detail=detail,
-                )
-            )
+            matched.append(rule_match)
         return matched
 
     def _content_rule_hits(
@@ -256,8 +409,13 @@ class AuditPipeline:
         rule: ContentRule,
         inp: EvaluationInput,
         results: Mapping[str, ScanResult],
-    ) -> tuple[str, str] | None:
-        """返回 (evidence, detail) 或 ``None``（未命中）。"""
+    ) -> MatchedRule | None:
+        """返回命中的 :class:`MatchedRule` 或 ``None``（未命中）。
+
+        ``repo_fingerprint`` 扫描器命中时，把结构化指纹命中清单（repo/file/line/
+        snippet，snippet 已按 W1 红线截断 80 字符）附进 ``extra.fingerprint_hits``
+        ——即 05 文档波次二 §2 的"事件 evidence 附指纹命中清单"。
+        """
         m = rule.match
         if rule.scanner is not None:
             result = results.get(rule.scanner)
@@ -267,17 +425,29 @@ class AuditPipeline:
                 if result.metrics.get("hits", 0) <= m.hits_gt:
                     return None
                 summary = ", ".join(h.rule_id for h in result.hits[:5])
-                return (
-                    f"{result.hit_count} hits [{rule.scanner}]",
-                    f"hits={result.hit_count} > {m.hits_gt}: {summary}",
-                )
-            if result.hit_count == 0:
+                evidence = f"{result.hit_count} hits [{rule.scanner}]"
+                detail = f"hits={result.hit_count} > {m.hits_gt}: {summary}"
+            elif result.hit_count == 0:
                 return None
-            first = result.hits[0]
-            return (
-                first.evidence,
-                f"{rule.scanner}:{first.rule_id}"
-                + (f" (+{result.hit_count - 1} more)" if result.hit_count > 1 else ""),
+            else:
+                first = result.hits[0]
+                evidence = first.evidence
+                detail = (
+                    f"{rule.scanner}:{first.rule_id}"
+                    + (f" (+{result.hit_count - 1} more)" if result.hit_count > 1 else "")
+                )
+            extra: dict[str, Any] = dict(result.hits[0].extra) if result.hits else {}
+            if rule.scanner == FINGERPRINT_SCANNER_NAME and result.hits:
+                # 05 文档波次二 §2：命中 → 事件附指纹命中清单（全部命中，≤20 条）
+                extra["fingerprint_hits"] = [_fingerprint_hit_dict(h) for h in result.hits]
+            return MatchedRule(
+                id=rule.id,
+                dim=DIM_CONTENT,
+                action=rule.action,
+                weight=rule.weight,
+                evidence=evidence,
+                detail=detail,
+                extra=extra,
             )
         # 无 scanner 的内容规则：体量 + 代码相似度（如 code-bulk-upload）
         if m.body_size_gt is not None and inp.body_size <= m.body_size_gt:
@@ -287,13 +457,26 @@ class AuditPipeline:
             if likeness is None or likeness.metrics.get("code_likeness", 0) <= m.code_likeness_gt:
                 return None
             value = likeness.metrics["code_likeness"]
-            return (
-                f"code_likeness={value}",
-                f"body_size={inp.body_size} > {m.body_size_gt}, "
-                f"code_likeness={value} > {m.code_likeness_gt}",
+            return MatchedRule(
+                id=rule.id,
+                dim=DIM_CONTENT,
+                action=rule.action,
+                weight=rule.weight,
+                evidence=f"code_likeness={value}",
+                detail=(
+                    f"body_size={inp.body_size} > {m.body_size_gt}, "
+                    f"code_likeness={value} > {m.code_likeness_gt}"
+                ),
             )
         if m.body_size_gt is not None:
-            return (f"body_size={inp.body_size}", f"body_size={inp.body_size} > {m.body_size_gt}")
+            return MatchedRule(
+                id=rule.id,
+                dim=DIM_CONTENT,
+                action=rule.action,
+                weight=rule.weight,
+                evidence=f"body_size={inp.body_size}",
+                detail=f"body_size={inp.body_size} > {m.body_size_gt}",
+            )
         return None
 
     def _eval_volume(self, policy: PolicyDocument, inp: EvaluationInput) -> list[MatchedRule]:

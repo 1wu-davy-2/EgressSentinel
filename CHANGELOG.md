@@ -1,5 +1,57 @@
 # 更新日志 Changelog
 
+## [v0.2.0] - 2026-10-24
+
+安全能力深化（洞察清单 ②，docs/05-security-deepening-plan.md）：四个新模块 + 全链路
+集成，**全部默认关闭**——升级零惊扰，逐项显式开启。
+
+### 新增
+
+- **仓库指纹比对**（`aaa fingerprint build [--repo PATH] [--rebuild]`）：把本地 git
+  仓库工作区按行滑窗切片建指纹库（`data/fingerprints.bin`，多仓库合并、5MB/文件与
+  200 万片限流防 OOM）；策略 `fingerprint.enabled` 开启后，外发请求体与库比对——
+  整段代码外发即命中，事件附指纹命中清单（repo/file/line + 80 字符片段）。建库纯
+  本地、零外发、不执行任何 git 命令。
+- **响应侧注入检测**：扫描响应体中的提示词注入特征（指令覆盖/角色伪造/越狱模板/
+  隐藏载体/套取系统提示词，纯 regex 零网络）；策略 `response.rules` 配置标注规则
+  （`patterns: all|high`），命中**仅 alert 级标注、绝不阻断响应**——响应体原样送达。
+- **LLM 辅助判定**：alert 级以上事件把（脱敏后的）摘要发给 OpenAI 兼容端点做第二
+  意见判定（是否违规/置信度/理由/类别），结论记事件 `judge_note`。异常/超时/非法
+  输出一律收敛为"不可用"，绝不影响审计；API key 只从环境变量 `AAA_JUDGE_API_KEY`
+  读取不落盘；每日预算封顶（默认 200 次，只计成功调用）；判定请求直连不走本机代理
+  （防回环）。策略 `judge` 段配置，默认关。
+- **证据静态加密**：策略 `encrypt.enabled` 开启后，请求 body 证据文件以 AES-256-GCM
+  落盘（`ES01` 魔数头）；密钥自动生成 `data/.crypto-key`（32B，权限收紧）或环境变量
+  `AAA_MASTER_PASSWORD` 口令 PBKDF2 派生；**读取永远透明兼容**——旧明文证据原样可读、
+  关闭加密后仍能解密历史密文；`sha256` 按密文文件计算（无密钥也可复核完整性）。
+  已知边界：`audit.db` 事件库元数据暂不整库加密（详见 docs/notes/decisions.md
+  D-2026-10-24-39，需要整库保密请配合 BitLocker 等磁盘级加密）。
+- **防火墙加固实装**（替换 v0.1.x 的 P6 占位）：`aaa harden on` 创建 4 条
+  `EgressSentinel-` 前缀规则（放行代理/svchost 443/TCP、阻止任意程序 443 TCP/UDP），
+  journal-first 记入 setup-state.json；`aaa harden off` / `aaa teardown firewall`
+  幂等还原。需管理员。**已知边界**：Windows 筛选平台 Block 优先于 Allow，any-Block
+  会同时命中代理与 svchost 白名单——加固后 443 出站可能全断（含本工具代理），命令
+  输出与文档均如实警示，off 即还原（详见 decisions.md D-2026-10-24-38）。
+
+### 变更
+
+- `policy/model.py` 新增 `fingerprint` / `judge` / `response` / `encrypt` 四段
+  （pydantic 严格校验，全部默认关/空；老策略文件无这些段照常加载）；`repo_fingerprint`
+  成为合法内容扫描器名；`response.rules[].action` 只接受 `alert`（响应侧红线在
+  schema 层固化）。
+- `aaa run` 启动概要新增三行安全深化状态（指纹 / LLM 判定 / 证据加密，含当日判定
+  预算用量）；`aaa status` 防火墙行改为真实加固状态，另加"安全深化"概要行；
+  `aaa policy lint` 增列四新段。
+- 证据存储 `EvidenceStore` 支持注入加密引擎（`crypto=` 参数）与 `read_body()` 透明
+  读取；事件模型新增 `judge_note` 字段。
+- 版本 0.1.3 → 0.2.0。
+
+### 升级与兼容
+
+- 老策略文件无需修改（新段缺省=全关）；加密开启前请确认 `data/` 目录已纳入备份——
+  密钥材料丢失即无法解密既有密文（工具会如实报错，绝不静默重建掩盖）。
+- `harden` 从占位变为实装：原先依赖其非零退出码的脚本需改为感知新行为。
+
 ## [v0.1.3] - 2026-10-24
 
 ### 新增

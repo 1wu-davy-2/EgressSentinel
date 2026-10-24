@@ -78,6 +78,11 @@ class AuditEvent(BaseModel):
     evidence: EvidenceInfo | None = None
     policy_version: str | None = None
     error: str | None = None
+    judge_note: dict[str, Any] | None = None
+    """LLM 辅助判定结论（05 文档 W3/波次二 §3）：``JudgeVerdict`` 的 JSON 形态
+    （status/is_violation/confidence/reason/category）。未判定为 ``None``；非 ok
+    状态（不可用/预算用尽）也如实记录——**未取得有效结论不等于"无违规"**，
+    消费方必须以 ``judge_note["status"] == "ok"`` 为采信前提。"""
 
 
 def new_event_id(now: datetime | None = None) -> str:

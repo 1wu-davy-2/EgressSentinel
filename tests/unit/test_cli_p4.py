@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -167,14 +168,33 @@ def test_tail_once_polls_and_exits(data: Path, wide: None) -> None:
     assert "evt_0" not in _norm(filtered.output)
 
 
-def test_harden_is_placeholder(tmp_path: Path) -> None:
-    """03 文档 T4.2：harden on/off 为 P6 占位提示，不改系统。"""
-    for action in ("on", "off"):
-        result = runner.invoke(app, ["harden", action])
-        assert result.exit_code == 1, "占位命令必须如实返回非成功"
-        out = _norm(result.output)
-        assert "尚未实施" in out and "P6" in out
-        assert "未对系统做任何改动" in out
+def test_harden_placeholder_replaced_by_real_command(monkeypatch, tmp_path: Path) -> None:
+    """v0.2.0：harden 已实装（05 文档波次二）。旧占位行为（恒 exit 1 + 提示未实施）不再存在。
+
+    红线：netsh 全 mock（绝不真实施改防火墙）；非管理员路径走门禁拒绝（exit 2）。
+    """
+    from aaa.setup import firewall as fw
+
+    monkeypatch.setattr("aaa.cli.is_current_process_elevated", lambda: False)
+    monkeypatch.setattr(fw, "is_current_process_elevated", lambda: False)
+    calls: list[list[str]] = []
+
+    def fake_netsh(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(list(args))
+        return subprocess.CompletedProcess(args, 0, "确定。", "")
+
+    monkeypatch.setattr(fw, "_run_netsh", fake_netsh)
+    # off 无记录：无需管理员，零改动成功
+    result = runner.invoke(app, ["harden", "off", "--data-dir", str(tmp_path / "d")])
+    assert result.exit_code == 0
+    assert "没有防火墙加固记录" in _norm(result.output)
+    assert calls == [], "无记录时不得触达 netsh"
+    # on：非管理员被门禁拒绝（exit 2），不触达 netsh
+    result = runner.invoke(app, ["harden", "on", "--data-dir", str(tmp_path / "d")])
+    assert result.exit_code == 2
+    assert "管理员" in _norm(result.output)
+    assert calls == []
+    # 非法参数仍被拒
     assert runner.invoke(app, ["harden", "bogus"]).exit_code != 0
 
 

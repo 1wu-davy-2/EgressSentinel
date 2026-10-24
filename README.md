@@ -69,7 +69,8 @@ AI Agent（Claude Code / Cursor / Codex 类 CLI、IDE 插件、MCP 后台服务�
 - [x] 代码实现 P0-P5（GLM-5.3-Flash，经动态工作流逐阶段实施 + pytest 功能门禁 + 独立验收）
 - [x] 可执行文件打包（`dist/ai-agent-audit.exe`，PyInstaller onefile，`--help` 冒烟通过）
 - [x] 官网介绍页（`website/index.html`）
-- [ ] P6 强化（可选）：防火墙防绕过加固、LLM 辅助判定、服务化常驻（见 `docs/03-execution-plan.md`）
+- [x] 安全深化 v0.2.0（洞察清单 ②）：仓库指纹、响应侧注入标注、LLM 辅助判定、证据加密、防火墙加固实装
+- [ ] 后续强化（可选）：audit.db 整库加密、WFP 子层权重（绕过加固的 Allow 精确化）、服务化常驻
 
 > 实现过程中的全部设计偏离与决策均记录在 `docs/notes/decisions.md`。
 
@@ -157,11 +158,122 @@ notifications:
 - 测试通道：`aaa notify test`（按配置发一条测试通知）或 `aaa notify test --channel webhook`；
   当前配置看 `aaa status` 的「通知」行。
 
+## 安全深化（v0.2.0：指纹 / 注入标注 / LLM 判定 / 加密 / 防火墙）
+
+v0.2.0 新增四项安全能力 + 防火墙加固实装。**全部默认关闭**，在策略 YAML 对应段落
+显式开启（保存约 2 秒热更新生效；指纹库与加密开关在 `aaa run` 启动时装配，改完重启）。
+老策略文件没有这些段 = 全关，升级零惊扰。
+
+### 1. 仓库指纹比对（防整段代码外发）
+
+把本地代码仓库按行滑窗切片（8 行窗口、去注释/空行、SHA1 入库，多仓库合并）建指纹库，
+外发请求体与库比对——Agent 把源码整段发给第三方端点时即使绕过密钥/代码相似度规则，
+也能按"逐字命中"报出仓库、文件与行号：
+
+```text
+aaa fingerprint build --repo E:\work\my-repo        # 建库/增量合并（可多次 --repo；--rebuild 从零重建）
+aaa fingerprint build                                # 不带 --repo 时读策略 fingerprint.repos
+```
+
+```yaml
+fingerprint:
+  enabled: true
+  repos: ["E:/work/my-repo", "E:/work/other-repo"]   # 建库路径清单（也可只由 CLI --repo 传入）
+  min_hits: 1                                        # 命中多少个 8 行窗口算命中
+```
+
+```yaml
+content:
+  scanners: [secrets, pii, code_leak, repo_fingerprint]
+  rules:
+    - { id: repo-leak, scanner: repo_fingerprint, action: block, weight: 60 }
+```
+
+- 建库**纯本地、零外发**、不执行任何 git 命令（只读工作区文件，跳过 `.git`/二进制/
+  超 5MB 文件，总片上限 200 万防 OOM）；命中证据固定 80 字符片段，事件与通知不携带
+  更多原文；
+- 指纹库 `data/fingerprints.bin` 是本地信任数据；损坏自动按"缺失"处理重建，`aaa run`
+  启动时缺失会告警提示先 `aaa fingerprint build`（不自动遍历仓库拖慢启动）。
+
+### 2. 响应侧注入标注（不阻断）
+
+扫描**响应体**中的提示词注入特征（指令覆盖 ignore previous/无视之前的指令、角色伪造
+`<system>`/DAN、越狱模板、零宽字符与 base64 隐藏载体、套取系统提示词），规则来自
+promptfoo/garak 公开语料反推的高频特征，纯 regex 零网络：
+
+```yaml
+response:
+  rules:
+    - id: response-injection
+      patterns: all        # all=任何注入特征命中 | high=仅高危（指令覆盖/隐藏载体）
+      action: alert        # 响应侧只支持 alert——只标注、绝不阻断/改写响应（schema 强制）
+```
+
+命中事件的 `matched_rules` 增加 `dim=response` 条目（含严重度与命中等明细），
+verdict 低于 alert 时抬到 alert（照常走通知门槛）；响应体**原样送达客户端**。
+
+### 3. LLM 辅助判定（第二意见）
+
+alert 级以上事件把**脱敏后**的摘要（复用通知同一打码核心，明文密钥绝不外发）发给
+OpenAI 兼容 `/chat/completions` 端点，让模型对"是否构成安全违规"给出第二意见
+（结论记事件 `judge_note`）：
+
+```yaml
+judge:
+  enabled: true
+  api_base: "https://api.openai.com/v1"   # 不含 /chat/completions
+  model: "gpt-4o-mini"
+  timeout: 8
+  max_events_per_day: 200                 # 每日预算（只计成功取得结论的调用）
+```
+
+- API key 只从环境变量 `AAA_JUDGE_API_KEY` 读取，绝不落盘/进日志/进事件；
+- 超时/非法输出/网络失败一律收敛为"判定不可用"，**绝不影响审计主流程**；
+- 判定请求直连（不走系统代理），避免被本工具自己拦截回环；
+- 开启前请确认摘要外发到你选择的端点符合你的数据策略——这是唯一的"内容外发"功能。
+
+### 4. 证据静态加密
+
+```yaml
+encrypt:
+  enabled: true
+```
+
+开启后请求 body 证据文件（`data/evidence/*.bin`）以 **AES-256-GCM** 落盘（`ES01`
+魔数头）；密钥来源二选一：`data/.crypto-key` 自动生成（32B 随机，权限收紧），或环境
+变量 `AAA_MASTER_PASSWORD` 口令 PBKDF2（200k 迭代）派生。
+
+- **读取永远透明兼容**：旧明文证据原样可读；关闭加密后仍能解密历史密文；
+- `sha256` 按落盘密文计算（无密钥也可复核完整性），`size/truncated` 描述明文；
+- 密钥材料丢失 = 既有密文不可解：工具如实报错，绝不静默重建掩盖——请把 `data/`
+  纳入备份策略；
+- 开关在 `aaa run` 启动时生效（热更新不切换加密状态）；
+- **边界**：`audit.db` 事件库（元数据/命中规则/摘要）暂不整库加密，需要整库保密请
+  配合 BitLocker 等磁盘级加密（详见 docs/notes/decisions.md D-2026-10-24-39）。
+
+### 5. 防火墙加固（`aaa harden`，需管理员）
+
+把 443 出站收敛到本代理的唯一出口（堵 HTTPS 直连与 QUIC 绕行）：
+
+```text
+aaa harden on            # 创建 4 条 EgressSentinel- 前缀规则（journal-first，可还原）
+aaa harden off           # 按记录精确删除（幂等）
+aaa teardown firewall    # 等价：只还原防火墙类改动
+```
+
+- 规则集：放行代理与 svchost 443/TCP，阻止任意程序 443/TCP 与 443/UDP；
+- `--proxy-exe` 可指定放行的代理程序（缺省 = 当前的 python/exe 自身）；
+- **已知边界（如实警示）**：Windows 筛选平台 Block 优先于 Allow——any-Block 规则会
+  同时命中代理与 svchost 白名单，`on` 后 443 出站可能全断（含本工具代理自身）；
+  断网立即 `aaa harden off` 还原。真机启用前建议先在可还原环境演练
+  （详见 docs/notes/decisions.md D-2026-10-24-38）。
+
 ## 卸载
 
 ```text
 aaa teardown              # 按改动日志逆序幂等还原：删除 CA（按序列号精确匹配）、还原代理设置、
-                          # 删除环境变量；即使 aaa run 中途崩溃，重启后执行仍能完整还原
+                          # 删除环境变量、删除防火墙规则、删除计划任务；即使 aaa run 中途崩溃，
+                          # 重启后执行仍能完整还原
 ```
 
 残留自检：`aaa status` 会显示"待还原改动"提示。
@@ -195,7 +307,7 @@ aaa teardown              # 按改动日志逆序幂等还原：删除 CA（按�
 - **某个 Agent 的流量没被捕获？** Node.js 系工具默认不读系统代理与系统证书，必须执行过 `aaa setup env`（注入 `NODE_USE_ENV_PROXY` / `NODE_EXTRA_CA_CERTS`）并**重启该 Agent 进程**；Python 系对应 `REQUESTS_CA_BUNDLE` / `SSL_CERT_FILE`。
 - **看到 CERTIFICATE_VERIFY_FAILED？** 目标进程未信任本工具 CA——确认对应运行时的环境变量已下发。
 - **杀毒软件报警？** 本地代理 + 根证书安装对应 MITRE T1553.004，属预期行为；regular 模式不加载任何驱动。请确认是你本人主动安装。
-- **QUIC/HTTP3 流量？** 遵循代理设置的应用不会直连 QUIC；对硬编码直连的进程需要 P6 的防火墙加固（`aaa harden` 目前为占位）。
+- **QUIC/HTTP3 流量？** 遵循代理设置的应用不会直连 QUIC；对硬编码直连的进程需要防火墙加固：`aaa harden on`（需管理员，见「安全深化」小节；注意 WFP 边界与还原方式）。
 
 ## 合规与使用边界
 

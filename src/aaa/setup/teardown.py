@@ -23,6 +23,7 @@ from aaa.setup.envvars import (
     restore_file_created,
     restore_user_envvar,
 )
+from aaa.setup.firewall import KIND_FIREWALL_RULE, restore_harden
 from aaa.setup.proxy import (
     KIND_WINHTTP,
     KIND_WININET,
@@ -54,7 +55,8 @@ class TeardownReport:
         return not self.failed
 
 
-#: kind → 还原函数；CA 的还原在 ca 记录模块注册（cli/setup 流程内），此处先登记通用六类
+#: kind → 还原函数；CA 的还原在 ca 记录模块注册（cli/setup 流程内），此处先登记通用七类
+#: （v0.2.0 增防火墙规则：aaa harden on 的 journal 记录按规则名精确删除，05 文档波次二 §6）
 RESTORERS: dict[str, Restorer] = {
     KIND_ENV_VAR: restore_user_envvar,
     KIND_FILE_CREATED: restore_file_created,
@@ -62,6 +64,7 @@ RESTORERS: dict[str, Restorer] = {
     KIND_WINHTTP: restore_winhttp_proxy,
     KIND_AUTOSTART_TASK: restore_scheduled_task,
     KIND_WATCHDOG_TASK: restore_scheduled_task,
+    KIND_FIREWALL_RULE: restore_harden,
 }
 
 
@@ -82,7 +85,7 @@ def restore_ca_entry(state: StateFile, entry: StateEntry) -> None:
 
 
 def teardown_target_kinds(targets: tuple[str, ...] | None) -> set[str] | None:
-    """把 CLI 目标（ca/proxy/env/all）映射到 kind 集合；None/空 = 全部。"""
+    """把 CLI 目标（ca/proxy/env/autostart/firewall/all）映射到 kind 集合；None/空 = 全部。"""
     if not targets:
         return None
     mapping: dict[str, set[str]] = {
@@ -90,12 +93,15 @@ def teardown_target_kinds(targets: tuple[str, ...] | None) -> set[str] | None:
         "proxy": {KIND_WININET, KIND_WINHTTP},
         "env": {KIND_ENV_VAR, KIND_FILE_CREATED},
         "autostart": {KIND_AUTOSTART_TASK, KIND_WATCHDOG_TASK},
+        "firewall": {KIND_FIREWALL_RULE},
     }
     kinds: set[str] = set()
     for target in targets:
         normalized = target.strip().lower()
         if normalized not in mapping:
-            raise ValueError(f"未知 teardown 目标：{target!r}（支持 ca/proxy/env/autostart）")
+            raise ValueError(
+                f"未知 teardown 目标：{target!r}（支持 ca/proxy/env/autostart/firewall）"
+            )
         kinds |= mapping[normalized]
     return kinds
 

@@ -1,16 +1,20 @@
 """``aaa`` CLI（typer，02 文档 §2 ``aaa.cli``）。
 
 P4 完整化（03 文档 T4.2）：``setup``（交互向导）、``run``、``status``、``tail``、
-``report``、``policy lint``、``trim``、``harden``（P6 占位）、``teardown``、``web``。
+``report``、``policy lint``、``trim``、``harden``、``teardown``、``web``。
+v0.2.0 安全深化（05 文档波次二）：``fingerprint build`` 建库、``harden on|off``
+防火墙加固（替换 P6 占位）、``run`` 启动概要含 judge/fingerprint/加密状态。
 
 安全红线：setup/teardown 命令提供 ``--dry-run``；所有系统修改动作执行前打印将要做的
 改动；全部改动 journal-first 记入 ``data/setup-state.json``；``--mode local`` 与机器级
-操作需管理员，非管理员直接拒绝。
+操作（harden）需管理员，非管理员直接拒绝。
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -40,19 +44,25 @@ from aaa.config import (
     resolve_retention_days,
 )
 from aaa.engine.pipeline import AuditPipeline
+from aaa.fingerprint import FINGERPRINTS_FILE_NAME, FingerprintIndex
+from aaa.judge import DEFAULT_JUDGE_USAGE_FILENAME, JudgeUsageStore, LLMJudge
 from aaa.notify.channels import CHANNEL_NAMES, build_channels
 from aaa.notify.dispatcher import Dispatcher, build_dispatcher, notify_config_from_policy
 from aaa.notify.model import apply_env_overrides
 from aaa.policy.loader import PolicyError, PolicyLoader
+from aaa.policy.model import PolicyDocument
 from aaa.setup import autostart as autostart_mod
 from aaa.setup import ca as ca_mod
 from aaa.setup import envvars as envvars_mod
+from aaa.setup import firewall as firewall_mod
 from aaa.setup import proxy as proxy_mod
 from aaa.setup import teardown as teardown_mod
 from aaa.setup import watchdog as watchdog_mod
 from aaa.setup.admin import is_current_process_elevated
+from aaa.setup.firewall import FirewallError
 from aaa.setup.state import StateFile
 from aaa.setup.wizard import collect_setup_plans, run_setup_wizard
+from aaa.store.crypto import CryptoEngine
 from aaa.store.db import DbEventStore, parse_since
 from aaa.store.decisions import DecisionStore
 from aaa.store.events import AuditEvent, Destination, RequestInfo, new_event_id
@@ -76,9 +86,14 @@ autostart_app = typer.Typer(
 app.add_typer(autostart_app, name="autostart")
 notify_app = typer.Typer(no_args_is_help=True, help="告警通知（toast/webhook/email，04 文档）")
 app.add_typer(notify_app, name="notify")
+fingerprint_app = typer.Typer(
+    no_args_is_help=True, help="仓库指纹库（05 文档 W1：本地代码外发比对）"
+)
+app.add_typer(fingerprint_app, name="fingerprint")
 
 console = Console()
 err_console = Console(stderr=True)
+logger = logging.getLogger(__name__)
 
 DataDirOpt = typer.Option(
     None,
@@ -174,12 +189,17 @@ def run(
         paths = resolve_paths(data_dir)
         paths.ensure_runtime_dirs()
         policy_loader = _prepare_policy_loader(policy)
-        pipeline = AuditPipeline(policy_loader)
+        doc = policy_loader.current
+        fingerprint_index = _load_fingerprint_index(paths.data_dir, doc)
+        pipeline = AuditPipeline(policy_loader, fingerprint_index=fingerprint_index)
         pinned = resolve_pinned_process(pid, process) if is_local else None
         store = DbEventStore(paths.db_file, evidence_dir=paths.evidence_dir)
         if jsonl:
             store.mirror = JsonlEventStore(paths.raw_dir)
-        evidence = EvidenceStore(paths.evidence_dir, rel_base=paths.data_dir)
+        # 证据加密（05 文档 W5/波次二）：开关启动时生效；引擎始终注入——关闭时写明文，
+        # 读取仍透明兼容开启期间落盘的密文（decisions.md D-2026-10-24-35/39）
+        crypto_engine = CryptoEngine(paths.data_dir, enabled=doc.encrypt.enabled)
+        evidence = EvidenceStore(paths.evidence_dir, rel_base=paths.data_dir, crypto=crypto_engine)
         dispatcher = build_dispatcher(policy_loader)
         addon = AuditAddon(
             store,
@@ -190,6 +210,7 @@ def run(
             pinned_process=pinned,
             decisions=DecisionStore(paths.decisions_file, default_ttl=resolve_confirm_ttl(None)),
             dispatcher=dispatcher,
+            judge=_build_judge(doc, paths.data_dir),
         )
         engine = CaptureEngine(
             ProxyConfig(
@@ -223,6 +244,9 @@ def run(
             f"（保留期 {retention} 天，连带证据 {trimmed['evidence']} 个）"
         )
     console.print(_notify_summary_line(policy_loader, dispatcher))
+    # v0.2.0 安全深化概要（05 文档波次二 §5）：judge / fingerprint / 加密状态
+    for line in _deepening_summary_lines(doc, fingerprint_index, crypto_engine, paths.data_dir):
+        console.print(line)
     console.print("按 Ctrl+C 优雅退出；关机/注销时自动限时收尾（不阻塞系统关机）。")
     if log_file is not None:
         _append_log(
@@ -255,6 +279,74 @@ def _notify_summary_line(policy_loader: PolicyLoader, dispatcher: Dispatcher) ->
         f"通知：{enabled}{extra}；门槛 min_action={config.min_action}；"
         f"限流 {config.rate_limit.max_per_minute} 条/分钟（超出合并为 digest）"
     )
+
+
+# --------------------------------------------------------------------------
+# v0.2.0 安全深化：指纹库装配 / judge 装配 / 启动概要（05 文档波次二 §5）
+# --------------------------------------------------------------------------
+
+
+def _load_fingerprint_index(data_dir: Path, doc: PolicyDocument) -> FingerprintIndex | None:
+    """策略启用指纹时加载指纹库；缺失/损坏时给出可操作的指引（不自动重建）。
+
+    - 自动重建需要遍历用户仓库（大仓可达分钟级），静默做会拖慢 ``aaa run`` 启动
+      且可能读到过期内容——如实交给显式的 ``aaa fingerprint build``（05 文档 §5）；
+    - 未启用时返回 None（管线不注册 repo_fingerprint 扫描器）。
+    """
+    if not doc.fingerprint.enabled:
+        return None
+    store_path = data_dir / FINGERPRINTS_FILE_NAME
+    index = FingerprintIndex.load(store_path)
+    if index is None:
+        logger.warning("指纹库缺失或损坏：%s（aaa fingerprint build 构建后重启生效）", store_path)
+    return index
+
+
+def _build_judge(doc: PolicyDocument, data_dir: Path) -> LLMJudge | None:
+    """策略启用 judge 时构造判定器（预算文件随 --data-dir 落位）；未启用返回 None。"""
+    if not doc.judge.enabled:
+        return None
+    return LLMJudge(doc.judge, usage_path=data_dir / DEFAULT_JUDGE_USAGE_FILENAME)
+
+
+def _deepening_summary_lines(
+    doc: PolicyDocument,
+    fingerprint_index: FingerprintIndex | None,
+    crypto_engine: CryptoEngine,
+    data_dir: Path,
+) -> list[str]:
+    """启动概要的三行安全深化状态（judge / 指纹 / 加密；05 文档波次二 §5）。"""
+    lines: list[str] = []
+    if doc.fingerprint.enabled:
+        if fingerprint_index is None:
+            lines.append(
+                "[yellow]指纹比对：已启用但指纹库缺失/损坏——运行 "
+                "aaa fingerprint build 构建后重启生效[/yellow]"
+            )
+        else:
+            lines.append(
+                f"指纹比对：开启（{len(fingerprint_index.repos)} 仓库 "
+                f"{fingerprint_index.total_slices} 片 → data/{FINGERPRINTS_FILE_NAME}）"
+            )
+    else:
+        lines.append("指纹比对：关闭（policy.fingerprint.enabled）")
+    if doc.judge.enabled:
+        used = JudgeUsageStore(data_dir / DEFAULT_JUDGE_USAGE_FILENAME).today_count()
+        lines.append(
+            f"LLM 判定：开启（model={doc.judge.model or '-'}，"
+            f"今日已用 {used}/{doc.judge.max_events_per_day}；key=环境变量只读不落盘）"
+        )
+    else:
+        lines.append("LLM 判定：关闭（policy.judge.enabled）")
+    if crypto_engine.enabled:
+        describe = crypto_engine.describe()
+        lines.append(
+            f"证据加密：开启（{describe['algorithm']}，keyfile={describe['keyfile']}；"
+            "密钥首次写入后生成）"
+        )
+    else:
+        lines.append("证据加密：关闭（policy.encrypt.enabled；读取仍兼容历史密文）")
+    return lines
 
 
 def _append_log(log_file: Path, message: str) -> None:
@@ -459,7 +551,7 @@ def setup_env(
 @app.command()
 def teardown(
     targets: list[str] | None = typer.Argument(  # noqa: B008 - typer 惯用法
-        None, help="限定范围：ca | proxy | env（可多选）；缺省=全部"
+        None, help="限定范围：ca | proxy | env | autostart | firewall（可多选）；缺省=全部"
     ),
     data_dir: Path | None = DataDirOpt,
     dry_run: bool = DryRunOpt,
@@ -719,11 +811,26 @@ def status(
         ca_desc = f"读取失败：{exc}"
     table.add_row("CA（confdir）", ca_desc)
 
-    # —— 防火墙（P6 占位）——
-    table.add_row("防火墙加固（harden）", "未实施（P6 占位，见 03 文档 T6.1）")
+    # —— 防火墙加固（v0.2.0 实装，05 文档波次二）——
+    try:
+        fw_entries = [
+            e
+            for e in StateFile(paths.setup_state_file).entries()
+            if e.kind == firewall_mod.KIND_FIREWALL_RULE
+        ]
+        if fw_entries:
+            harden_desc = (
+                f"已加固 {len(fw_entries)} 条规则（aaa harden off / teardown firewall 还原）"
+            )
+        else:
+            harden_desc = "未启用（aaa harden on，需管理员）"
+    except Exception as exc:  # noqa: BLE001 - 状态命令不因读失败中断
+        harden_desc = f"读取失败：{exc}"
+    table.add_row("防火墙加固（harden）", harden_desc)
 
     # —— 策略 ——
     notify_desc = "-"
+    deepening_desc = "-"
     try:
         doc = PolicyLoader(policy or DEFAULT_POLICY_FILE).load()
         policy_desc = f"mode={doc.mode} version={doc.policy_version}"
@@ -736,10 +843,18 @@ def status(
         )
         if notify_cfg.webhook.enabled:
             notify_desc += f"；webhook provider={notify_cfg.webhook.provider}"
+        # 安全深化概要（05 文档波次二；只报开/关，不展开密钥与仓库内容）
+        deepening_desc = (
+            f"指纹={'开' if doc.fingerprint.enabled else '关'}；"
+            f"judge={'开' if doc.judge.enabled else '关'}；"
+            f"响应标注={'开' if doc.response.rules else '关'}；"
+            f"证据加密={'开' if doc.encrypt.enabled else '关'}"
+        )
     except PolicyError as exc:
         policy_desc = f"策略加载失败：{exc}"
     table.add_row("策略", policy_desc)
     table.add_row("通知", notify_desc)
+    table.add_row("安全深化", deepening_desc)
 
     # —— 事件库 ——
     try:
@@ -973,16 +1088,225 @@ def trim(
 @app.command()
 def harden(
     action: str = typer.Argument(..., help="on | off"),
+    proxy_exe: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
+        None,
+        "--proxy-exe",
+        help="on：放行的代理可执行文件（缺省=当前解释器/可执行文件自身）",
+    ),
+    data_dir: Path | None = DataDirOpt,
+    dry_run: bool = DryRunOpt,
+    yes: bool = typer.Option(False, "--yes", "-y", help="跳过确认（自动化用）"),
 ) -> None:
-    """防火墙加固开关（P6 占位，03 文档 T6.1：v1 未实施）。"""
-    if action not in ("on", "off"):
-        raise typer.BadParameter("harden 只支持 on | off")
+    """防火墙加固开关（05 文档波次一 W2/波次二 §5）：把 443 出站收敛到本代理。
+
+    on：创建 4 条 ``EgressSentinel-`` 前缀规则（journal-first 记入 setup-state.json，
+    可 ``harden off``/``aaa teardown`` 还原）；off：按记录精确删除（幂等）。
+    需管理员权限。
+
+    已知边界（firewall 模块如实登记）：Windows 筛选平台 Block 优先于 Allow，规则集
+    里的 any-Block 同样命中代理与 svchost 白名单——``on`` 后 443 出站可能全断
+    （含本工具代理自身）。上真机前请先在可还原环境演练（off 即还原），确认连通性。
+    """
+    paths = resolve_paths(data_dir)
+    if action == "on":
+        _harden_on(paths, proxy_exe, dry_run=dry_run, yes=yes)
+        return
+    if action == "off":
+        _harden_off(paths, dry_run=dry_run)
+        return
+    raise typer.BadParameter("harden 只支持 on | off")
+
+
+def _require_admin_for_harden() -> None:
+    """管理员门禁（与 run --mode local 同样的 UAC 指引；非提权 netsh 必然失败）。"""
+    if not is_current_process_elevated():
+        err_console.print(
+            "[red]harden 需要管理员权限（netsh advfirewall 需提升令牌）。[/red]\n"
+            "请以管理员身份运行 PowerShell / 终端后重试：\n"
+            "  右键开始菜单 → 终端(管理员) 或 PowerShell(管理员)\n"
+            "  然后执行：aaa harden on"
+        )
+        raise typer.Exit(code=2)
+
+
+def _harden_on(
+    paths: Any, proxy_exe: Path | None, *, dry_run: bool, yes: bool
+) -> None:
+    """``harden on``：先展示规则清单（dry-run 概念）→ 确认 → journal-first 逐条创建。"""
+    exe = proxy_exe if proxy_exe is not None else Path(sys.executable)
+    if not exe.is_file():
+        err_console.print(f"[red]代理程序不存在：{exe}[/red]")
+        raise typer.Exit(code=1)
+    rules = firewall_mod.plan_harden(exe)
+    console.print(f"将创建 {len(rules)} 条出站防火墙规则（名称前缀 EgressSentinel-）：")
+    for rule in rules:
+        program = rule.program if rule.program else "（任意程序）"
+        console.print(
+            f"  - {rule.name}：{rule.action.upper()} {rule.protocol} {rule.remote_port}"
+            f" ← {program}"
+        )
     console.print(
-        "[yellow]harden 尚未实施（P6，03 文档 T6.1）。[/yellow]\n"
-        "规划能力：放行本工具 443/TCP、拒绝其他进程 443/TCP、拒绝 UDP 443，"
-        "规则进状态文件可还原。本次未对系统做任何改动。"
+        "[yellow]已知边界：Windows 筛选平台 Block 优先于 Allow，any-Block 规则会同时"
+        "命中代理与 svchost 白名单——加固后 443 出站可能全断（含本工具代理）。"
+        "出现断网可立即执行 aaa harden off 还原。[/yellow]"
     )
-    raise typer.Exit(code=1)
+    if dry_run:
+        console.print("[yellow](dry-run)[/yellow] 未实施（未触达防火墙，未写状态文件）。")
+        return
+    _require_admin_for_harden()
+    if not yes and not typer.confirm("确认创建以上防火墙规则？", default=False):
+        console.print("已取消。未对系统做任何改动。")
+        raise typer.Exit()
+    state = StateFile(paths.setup_state_file)
+    try:
+        entries = firewall_mod.apply_harden(state, exe)
+    except FirewallError as exc:
+        err_console.print(f"[red]防火墙加固失败：{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    for entry in entries:
+        console.print(f"[green]已创建防火墙规则[/green] {entry.key}")
+    console.print(
+        f"加固完成：{len(entries)} 条规则在案（setup-state.json）；"
+        "还原：aaa harden off 或 aaa teardown firewall。"
+    )
+
+
+def _harden_off(paths: Any, *, dry_run: bool) -> None:
+    """``harden off``：按状态文件记录精确删除本工具创建的防火墙规则（幂等）。"""
+    entries = [e for e in StateFile(paths.setup_state_file).entries()
+               if e.kind == firewall_mod.KIND_FIREWALL_RULE]
+    if not entries:
+        console.print("状态文件没有防火墙加固记录（本就未加固，无需还原）。")
+        return
+    console.print(f"将删除 {len(entries)} 条防火墙规则：")
+    for entry in entries:
+        console.print(f"  - {entry.kind}:{entry.key}（{entry.ts}）")
+    if dry_run:
+        console.print("[yellow](dry-run)[/yellow] 未实施。")
+        return
+    _require_admin_for_harden()
+    state = StateFile(paths.setup_state_file)
+    failed = 0
+    for entry in reversed(entries):
+        try:
+            firewall_mod.restore_harden(state, entry)
+        except FirewallError as exc:
+            failed += 1
+            err_console.print(f"[red]{entry.kind}:{entry.key} 删除失败：{exc}[/red]")
+        else:
+            console.print(f"[green]已删除防火墙规则[/green] {entry.key}")
+    if failed:
+        err_console.print(
+            f"[red]{failed} 条规则删除失败（记录保留，可重跑 aaa harden off 重试）。[/red]"
+        )
+        raise typer.Exit(code=1)
+    console.print("[green]防火墙加固已全部还原。[/green]")
+
+
+# --------------------------------------------------------------------------
+# fingerprint：仓库指纹库（05 文档波次一 W1/波次二 §5）
+# --------------------------------------------------------------------------
+
+
+@fingerprint_app.command("build")
+def fingerprint_build(
+    repo: list[Path] | None = typer.Option(  # noqa: B008 - typer 惯用法
+        None,
+        "--repo",
+        help="仓库工作区路径（可多次传入；缺省读策略 fingerprint.repos）",
+    ),
+    rebuild: bool = typer.Option(
+        False, "--rebuild", help="丢弃现有指纹库从零重建（缺省在既有库上增量合并）"
+    ),
+    policy: Path | None = typer.Option(  # noqa: B008 - typer 惯用法
+        None, "--policy", help="策略 YAML 文件（默认 policies/default.yaml）"
+    ),
+    data_dir: Path | None = DataDirOpt,
+) -> None:
+    """构建/增量合并仓库指纹库（data/fingerprints.bin）：纯本地，无任何外发。
+
+    同名仓库重复并入会被拒绝（--rebuild 可从零重建）；非 git 工作区需目录内含
+    ``.git``（建库仅读工作区文件，不执行任何 git 命令、不触网）。
+    """
+    paths = resolve_paths(data_dir)
+    try:
+        doc = PolicyLoader(policy or DEFAULT_POLICY_FILE).load()
+    except PolicyError as exc:
+        err_console.print(f"[red]策略加载失败：{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+    repos = list(repo) if repo else [Path(p) for p in doc.fingerprint.repos]
+    if not repos:
+        err_console.print(
+            "[red]未指定仓库。[/red] 用 --repo PATH（可多次）或在策略 "
+            "fingerprint.repos 配置仓库路径清单。"
+        )
+        raise typer.Exit(code=1)
+    store_path = paths.data_dir / FINGERPRINTS_FILE_NAME
+    index: FingerprintIndex | None = None if rebuild else FingerprintIndex.load(store_path)
+    if index is None:
+        if rebuild:
+            console.print("[yellow]--rebuild：丢弃现有指纹库，从零重建。[/yellow]")
+        elif store_path.exists():
+            console.print("[yellow]现有指纹库缺失/损坏，将重建。[/yellow]")
+        index = FingerprintIndex()
+
+    failed: list[str] = []
+    skipped: list[str] = []
+    merged = 0
+    for repo_path in repos:
+        name = repo_path.name or str(repo_path)
+        try:
+            stats = index.add_repo(repo_path)
+        except NotADirectoryError as exc:
+            failed.append(f"{name}：{exc}")
+            continue
+        except ValueError as exc:
+            message = str(exc)
+            if "已在索引中" in message:
+                skipped.append(f"{name}：已在指纹库中（--rebuild 可从零重建）")
+                continue
+            failed.append(f"{name}：{exc}")
+            continue
+        merged += 1
+        console.print(
+            f"[green]已并入[/green] {stats.repo}：索引 {stats.files_indexed} 文件 / "
+            f"{stats.slices_added} 片"
+            + (
+                f"（跳过：过大 {stats.files_skipped_too_large}、"
+                f"二进制 {stats.files_skipped_binary}、读取失败 {stats.files_errored}）"
+                if (
+                    stats.files_skipped_too_large
+                    or stats.files_skipped_binary
+                    or stats.files_errored
+                )
+                else ""
+            )
+        )
+        if stats.slice_cap_reached:
+            console.print(
+                f"[yellow]仓库 {stats.repo} 触达总片上限（{stats.total_slices} 片），"
+                "后续文件未入库。[/yellow]"
+            )
+    for note in skipped:
+        console.print(f"[yellow]跳过[/yellow] {note}")
+    for error in failed:
+        err_console.print(f"[red]失败[/red] {error}")
+    if merged == 0 and failed:
+        # 全部仓库都失败：如实以非零退出报告，不落盘（库内容未变）
+        err_console.print("[red]没有任何仓库被并入，指纹库未改动。[/red]")
+        raise typer.Exit(code=1)
+    if merged == 0:
+        # 重复执行（请求的仓库都已在库中）：幂等 no-op，成功返回
+        console.print("没有新增仓库（请求的仓库都已在指纹库中）；指纹库未改动。")
+        return
+    index.save(store_path)
+    console.print(
+        f"[green]指纹库已保存[/green] {store_path}：{len(index.repos)} 仓库 / "
+        f"{index.total_slices} 片 / {index.digest_count} 指纹。"
+        + ("（重启 aaa run 后生效）" if doc.fingerprint.enabled else "")
+    )
+    if failed:
+        raise typer.Exit(code=1)
 
 
 # --------------------------------------------------------------------------
@@ -1071,6 +1395,22 @@ def policy_lint(
     table.add_row("content rules", str(len(doc.content.rules)))
     table.add_row("volume rules", str(len(doc.volume)))
     table.add_row("time_window rules", str(len(doc.time_window)))
+    table.add_row(
+        "fingerprint",
+        f"enabled={doc.fingerprint.enabled}, repos={len(doc.fingerprint.repos)}, "
+        f"min_hits={doc.fingerprint.min_hits}",
+    )
+    table.add_row(
+        "judge",
+        f"enabled={doc.judge.enabled}, model={doc.judge.model or '-'}, "
+        f"budget/day={doc.judge.max_events_per_day}",
+    )
+    table.add_row(
+        "response",
+        f"{len(doc.response.rules)} rules"
+        + (f"（{', '.join(r.id for r in doc.response.rules)}）" if doc.response.rules else ""),
+    )
+    table.add_row("encrypt", f"enabled={doc.encrypt.enabled}")
     console.print(table)
 
 

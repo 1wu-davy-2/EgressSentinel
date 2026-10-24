@@ -90,3 +90,38 @@ notifications:
     to_addrs: []           # 列表
   rate_limit:
     max_per_minute: 10     # 每通道滑动窗口；超出部分合并为一条 digest
+
+# ---------------------------------------------------------------------------
+# v0.2.0 安全深化新段（docs/05-security-deepening-plan.md 波次二）：
+# 以下全部默认关闭/空——开启方法见 README「安全深化」小节。
+# ---------------------------------------------------------------------------
+
+# 仓库指纹（05 文档 W1）：外发请求体与本地代码库切片比对，防"整段代码外发"。
+fingerprint:
+  enabled: false
+  repos: []                # 仓库工作区路径清单；aaa fingerprint build --repo PATH 逐个建库
+  min_hits: 1              # 命中多少片算一次有效命中
+
+# LLM 辅助判定（05 文档 W3）：对 alert 级以上事件摘要做第二意见判定（OpenAI 兼容端点）。
+# API key 只从环境变量 AAA_JUDGE_API_KEY 读取，绝不落盘；开启后才有外发（直连不走代理）。
+judge:
+  enabled: false
+  api_base: ""             # 如 https://api.openai.com/v1（不含 /chat/completions）
+  model: ""                # 如 gpt-4o-mini
+  timeout: 8               # 单次请求超时秒数
+  max_events_per_day: 200  # 每日预算（只累计成功取得结论的调用）
+
+# 响应侧注入标注（05 文档 W4/波次二 §3）：扫描响应体中的提示词注入特征。
+# 响应侧只做 alert 级标注、绝不阻断响应；rules 为空 = 功能关闭。
+response:
+  rules: []
+  # 取消注释启用（patterns: all=任何注入特征命中；high=仅高危——指令覆盖/隐藏载体）：
+  # - id: response-injection
+  #   patterns: all
+  #   action: alert         # 响应侧只支持 alert，写其他值策略校验直接失败
+
+# 证据静态加密（05 文档 W5）：AES-256-GCM，请求 body 证据落盘加密。
+# 密钥来源：data/.crypto-key 自动生成，或环境变量 AAA_MASTER_PASSWORD 口令派生；
+# 关闭时写入明文、读取仍透明兼容既有密文。开关在 aaa run 启动时生效（不热切换）。
+encrypt:
+  enabled: false

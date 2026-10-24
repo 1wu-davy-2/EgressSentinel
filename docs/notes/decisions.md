@@ -348,4 +348,164 @@
 - 理由：必备字段全部保留（超集不冲突）；「脱敏红线」有了可验证的落点（E2E 断言
   明文密钥不出现、打码指纹出现）；toast 前 3 行按 glance 价值排序。
 
+## D-2026-10-24-35 证据静态加密（W5）的三个规格空档：盐文件落位 / 密钥解析优先级 / 包装元数据语义
+
+- 问题：05 文档 W5 规定了 `derive_key(password, salt)`（PBKDF2 200k）与 keyfile/
+  口令两种密钥来源，但有三处未定：① 口令派生模式的 **salt 从哪来**（规格未提）；
+  ② "keyfile 优先"在 **keyfile 不存在而口令已设** 时如何取舍；③ `EncryptedFileStore`
+  包装的 `sha256`/`size` 元数据描述明文还是密文。
+- 选择：① 盐持久化为 `data/.crypto-salt`（16B 随机，权限收紧同 keyfile）——固定盐
+  可被彩虹表预计算、逐文件盐则每次读取都要 200k 迭代 KDF，均不可取；**盐丢失 = 既有
+  密文不可解**，引擎如实报 `CryptoError`，绝不静默重建。② 优先级定为：已有 keyfile >
+  口令（显式参数 > `AAA_MASTER_PASSWORD` 环境变量）> 生成 keyfile（仅 `enabled=True`
+  的写入路径）——已有 keyfile 必须优先（否则换机器设口令会丢旧密文访问权）；keyfile
+  缺失而用户显式给了口令时按口令派生（静默生成 keyfile 会无视用户意图）；两者皆无才
+  生成 keyfile。③ `sha256` = 实际落盘**密文**文件摘要（保留 evidence.py "与文件内容
+  一致可复核"不变量，无密钥也能验完整性）；`size/original_size/truncated` 如实描述
+  **明文**（对齐请求语义；截断发生在明文层，密文始终完整可解）。
+- 理由：三处均为"规格未定"而非规格冲突；选型以"不静默破坏既有数据的可访问性、
+  不伪造安全状态"为准绳。另：加密开启但密钥不可用时 fail-fast 报错而非静默写明文
+  （宁可失败，不给"已加密"假象）；`decrypt_bytes` 为严格模式（无魔数报错），明文
+  兼容判断只放在文件层（`decrypt_file`/`CryptoEngine.decrypt`/`EncryptedFileStore.
+  read_body`），与"读取时无魔数则按明文返回"的 W5 字面一致。
+
+## D-2026-10-24-36 LLM 辅助判定（W3）的规格空档：status 语义 / 预算默认值与口径 / 判定请求直连
+
+- 问题：05 文档波次一 W3 中：① `JudgeVerdict` 字段只列了 is_violation/confidence/
+  reason/category，但同一行又要求返回 `verdict(status="unavailable")`——status 字段
+  存在但其取值集与非 ok 时的字段语义未定义；② `max_events_per_day` 预算未给默认值，
+  也未说明超时/解析失败是否消耗预算；③ 未说明判定请求是否走系统代理。
+- 选择：① `JudgeVerdict` 增加 `status: Literal["ok", "unavailable", "budget_exceeded"]`；
+  非 ok 结论的 is_violation 恒为 False、confidence 恒为 0.0，集成方必须以
+  `status == "ok"`（`is_ok` 属性）为采信判定字段的前提。② 预算默认 200 次/日（规格
+  未定值）；口径为**只累计成功取得 ok 结论的调用**——超时/解析失败不计数，端点故障
+  不会烧穿预算；按本地日期滚动、`data/judge-usage.json` 原子落盘（tmp+replace），
+  文件损坏按 0 重新开始（预算是成本护栏不是安全护栏），落盘失败则按 W3 红线收敛为
+  unavailable。③ 判定请求 `trust_env=False` 直连（与 notify/webhook 同一约定）：本
+  工具自身就是系统代理，LLM 判定若走环境代理会回环进自己的采集。
+- 理由：三处均为"规格未定"；status 三值让运营可分辨"API 不可用"与"预算用尽"；
+  失败调用零产出不计费符合 max_events_per_day 的字面语义（按事件计，不按尝试计）。
+  全部为 W3 模块内决策，不触碰共享文件；集成阶段组装 `policy.judge` 段时以本条为准。
+
+## D-2026-10-24-37 W4 注入检测的误报治理取舍（05 文档波次一）
+
+- 问题：W4 要求覆盖 developer mode / 越狱 / `<system>` / `## system` / ignore previous
+  等特征，同时「正常技术文本零误报」是验收线——这些裸特征词在正常技术文本里高度歧义
+  （Android「启用开发者模式」、iOS「越狱」文章、`## System Requirements` 标题、
+  ASP.NET `<system.web>`、ATC 术语「Disregard previous transmission」、
+  「decode the JWT」文档、emoji ZWJ 序列）。
+- 选择（`src/aaa/scanners/injection.py`）：
+  1) 歧义词一律带上下文才命中：developer mode 需 you are/I am in/reactivate 形态；
+     「越狱」需 AI 词同现（chatgpt/gpt/大模型/提示词等）；`## system` 仅整行标题
+     （冒号可选）；`<system>` 仅裸角色标签（`<system.web>` 实测不命中）；base64 需
+     「解码并执行」指示语与 ≥32 字符 blob 同现，二者缺一不报；
+  2) 零宽字符（U+200B-U+200D）全文可疑数 ≥2 才报（emoji ZWJ 序列白名单；1 个视为
+     复制残留），2-5 low / 6-19 medium / ≥20 high；U+2060/U+FEFF 不计（BOM 误报面）；
+  3) 已知残余误报面（探针实测确认、均为 low/medium 标注级）：讲解聊天模板的文档命中
+     role-tag-template；「You are Dan（人名）」命中 persona-dan-en；用 ZWNJ 的
+     波斯/乌尔都正文 ≥2 个即报 hidden-zero-width；引用攻击样例的安全文章命中
+     override 类（样例即攻击文本本身，接受）。
+- 其他：`InjectionHit` 用 frozen dataclass（与 `scanners/base.py` 一致，未引入
+  pydantic）；除计划要求的 `scan_injection` 外提供 `scan_injection_result(body,
+  max_bytes=)`（ScanResult 包装，与 engine/pipeline.py:40 的 ScannerFn 签名兼容，
+  供波次二直接注册）；按「只新建」约定未改 `scanners/__init__.py`，集成阶段统一注册。
+
+## D-2026-10-24-38 W2 防火墙加固：WFP「Block 优先于 Allow」与规则集设计的冲突（05 文档波次一）
+
+- 问题：05 文档 W2 规则集为「①Allow 代理 exe TCP443；②Block any TCP443；③Block any
+  UDP443；白名单 svchost/Windows Update」。但 Windows 筛选平台的文档语义是 **Block
+  规则优先于 Allow 规则**（仅 IPsec authenticated bypass 例外，netsh 无优先级参数）——
+  按 ②③ 的 any-Block 落地后，① 与 svchost 白名单同样被 Block 命中：代理自身与
+  Windows Update 的 443 出站都会被断，`harden on` 实际效果是「全断 443」而非「收敛
+  到代理」。多来源交叉确认（Microsoft 文档语义 + 运维实践：any-Block 会吞掉匹配的
+  Allow 规则）。
+- 选择（`src/aaa/setup/firewall.py`）：
+  1) **按计划字面实现规则集**（本波次单测全 mock，不触真机，功能语义不在单测断言
+     范围内），Allow 规则照常创建；
+  2) **如实登记边界**：模块 docstring 与本条注明白名单对 any-Block 不生效；真机
+     连通性验证列入 needs-manual；集成阶段（`aaa harden on` 接线）上真机前必须先
+     做一次带 teardown 的实机演练，若确认全断，备选方案：a) Block 规则收窄到具体
+     程序/网段范围（netsh 无排除语法，需枚举）；b) 改用 WFP 自定义子层权重
+     （超出 netsh 能力）；c) IPsec authenticated bypass（需机器证书策略）。三个
+     备选都超出本波次范围，留给集成阶段决策。
+  3) 创建顺序 Allow 在前、Block 在后：创建中途崩溃时系统停留在「未加固」而非
+     「全断 443」状态（最终态不受创建顺序影响）。
+- 其他实现决策：apply 创建前先按名删除同名旧规则（`harden on` 可重复执行不产生
+  重名规则；delete 容忍不存在）；restore 幂等不依赖 delete 返回码语义——delete 非 0
+  时用 `show rule name=` 复核（本机只读探针实测：无匹配规则 show 返回码 1、非提权
+  shell 的 delete 返回「请求的操作需要提升」且在匹配前就检查提权），规则已不在即视为
+  成功；apply/restore 均设管理员门禁（复用 `setup.admin.is_current_process_elevated`），
+  restore 拒绝删除非 `EgressSentinel-` 前缀规则（防 journal 被篡改后误删他名规则）；
+  按「只新建」约定未改 `setup/__init__.py`，导出面在 `aaa.setup.firewall` 命名空间
+  （plan_harden/apply_harden/restore_harden/KIND_FIREWALL_RULE 等），集成阶段直接
+  `from aaa.setup.firewall import ...` 并向 teardown 注册 `KIND_FIREWALL_RULE` 还原器。
+
+## D-2026-10-24-39 波次二集成的九处规格落位（05 文档波次二）
+
+- 问题：05 文档波次二 9 条集成任务存在若干「方向明确但形态未定」的空档，集成时
+  逐一落位如下（全部为"规格未定"而非规格冲突，不改变计划要求的行为）。
+- 选择：
+  1) **`response.rules[].patterns` 语义** = 命中严重度档位：`all`（任何注入特征命中
+     即标注）| `high`（仅最高严重度为 high——指令覆盖/隐藏载体——才标注）。依据是
+     W4 模块的 severity 分级（low/medium/high）与计划"rules: [{id, patterns: all|high,
+     action: alert}]"的字面；`action` 在 schema 层固化为 Literal["alert"]——响应侧
+     写 block/confirm 直接策略校验失败（05 文档"仅 alert 级标注，不阻断响应"红线）。
+     响应侧命中规则 weight 恒 0：不抬高 risk_score，verdict 只在低于 alert 时抬到
+     alert（绝不降级既有 block/confirm，也绝不升级为阻断）。
+  2) **`repo_fingerprint` 扫描器形态**：`make_fingerprint_scanner(index)` 把指纹索引
+     包装成 ScannerFn（签名与其余扫描器一致，`max_bytes` 先截断再比对）；命中条目
+     evidence 用 W1 的 snippet（80 字符、空白压缩——W1 红线：事件外发不携带更长
+     原文），结构化命中清单（repo/file/line/snippet）附进事件 matched_rules 的
+     `extra.fingerprint_hits`（05 文档"命中→事件 evidence 附指纹命中清单"）。
+     注册时机：`aaa run` 启动时策略 `fingerprint.enabled` 且 `data/fingerprints.bin`
+     可加载 → 传入管线构造参数；**库缺失/损坏不自动重建**（重建需遍历用户仓库，
+     大仓分钟级，静默做会拖慢启动且可能读到过期内容）——如实告警并提示
+     `aaa fingerprint build`，构建后重启生效。
+  3) **`aaa fingerprint build`**：纯本地、零外发，不要求 `fingerprint.enabled`（建库
+     是显式维护动作）；缺省 `--repo` 时读策略 `fingerprint.repos`；同名仓库重复并入
+     按 W1 语义拒绝 → CLI 提示跳过（幂等 no-op，退出 0）；`--rebuild` 丢弃旧库从零
+     重建；全部仓库失败时退出 1 且不落盘。
+  4) **judge 接线**：`policy.judge` 段直接复用 W3 `JudgeConfig`（同字段同默认，无
+     第二份配置模型）；`aaa run` 启动时 `judge.enabled` 才构造 `LLMJudge`（预算文件
+     随 `--data-dir` 落位）；判定摘要复用通知同一脱敏核心（`notify.summary.build_summary`
+     → `mask_secret_spans`）——judge 红线 3 要求调用方先脱敏，这里是唯一落点；结论
+     （含非 ok 状态）如实记事件 `judge_note`（AuditEvent 新增字段，DB raw JSON 自动
+     携带），消费方以 `judge_note["status"] == "ok"` 为采信前提（D-36 语义）。
+  5) **evidence 接入形态**：按计划"store/evidence.py 接入 CryptoEngine"字面，
+     `EvidenceStore` 构造新增可选 `crypto` 参数（`CryptoLike` Protocol 解耦，
+     避免与 store.crypto 的循环导入）；写入 = 明文截断后经引擎加密，`sha256` =
+     实际落盘密文摘要（D-35 口径），`size/truncated` 描述明文；新增 `read_body()`
+     透明读取（无魔数原样返回）。`aaa run` **无条件**注入引擎：关闭时写明文，
+     读取仍透明兼容开启期间落盘的密文（"读取兼容与 enabled 无关"，D-35）。W5 的
+     `EncryptedFileStore` 包装保留（独立可用，测试覆盖），生产装配走构造参数注入。
+  6) **audit.db（事件库）暂不整库加密——边界如实声明**：W5 的加密范围是**证据文件**
+     （请求 body 的 `data/evidence/*.bin`）；SQLite 库 `audit.db` 的元数据行（host/
+     path/matched_rules/摘要等）仍为明文，理由：a) 05 文档 W5 只写"证据静态加密"，
+     未要求库加密，波次二第 4 条也只点名 evidence.py；b) 整库加密需引入 SQLCipher
+     类依赖或全库字节级加解密层（读取路径全变，与 WAL 并发/增量 trim/面板查询的
+     兼容改造量大且风险高），不宜在本波次顺带做；c) 现有降险：库文件落用户数据目录、
+     事件字段值在扫描/展示层已打码、保留期自动清理。**需要整库保密的用户，当前版本
+     请依赖磁盘级加密（BitLocker）**；后续如做，需先定密钥轮换与面板只读进程的
+     密钥分发方案（记录为待办而非既成事实）。
+  7) **加密开关启动生效**：`encrypt.enabled` 与指纹库一样在 `aaa run` 启动时读取，
+     策略热更新不切换加密状态（运行中切换会产出"同一目录新旧混杂且无开关语义"的
+     中间态；读取侧本就双向兼容，切换只需重启）。README/`--help` 均注明。
+  8) **`aaa harden on|off`**：替换 P6 占位（decisions D-22 的占位语义作废，
+     `test_cli_p4` 同步改写）。on：管理员门禁（非提权 exit 2，与 run --mode local
+     同样的 UAC 指引）→ plan_harden 清单先打印 → 确认/journal-first 逐条创建；
+     `--proxy-exe` 缺省取当前解释器/可执行文件自身（源码运行 `aaa run` 的代理进程
+     就是 python.exe；frozen 即 exe 本身）；控制台固定输出 WFP「Block 优先于 Allow」
+     已知边界（D-38）与 `harden off` 还原指引。off：按 setup-state.json 的
+     firewall_rule 记录逆序精确删除（复用 `restore_harden`，幂等；记录缺失=零操作
+     成功）。`aaa teardown` 新增 `firewall` 目标（RESTORERS 注册同一还原器）。
+  9) **run 启动概要**：新增三行——指纹（关/开+仓库数与片数/库缺失告警）、judge
+     （关/开+model+当日预算用量）、证据加密（关/开+算法与 keyfile 路径）；`aaa status`
+     的防火墙行从"P6 占位"改为真实状态（journal 中的规则计数），另加"安全深化"行。
+- 理由：逐条以"不伪造安全状态、不静默扩大外发面、规格未定处选最保守且可逆的形态"
+  为准绳；全部落位均有对应单测/契约断言（tests/unit/test_security_deepening.py、
+  tests/e2e/test_security_deepening_e2e.py）。
+
+
+
+
 

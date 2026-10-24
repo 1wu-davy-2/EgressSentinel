@@ -1,10 +1,15 @@
-"""审计 addon：mitmproxy 钩子 → 事件对象 → store（03 文档 T1.2/T2.1/T3.4）。
+"""审计 addon：mitmproxy 钩子 → 事件对象 → store（03 文档 T1.2/T2.1/T3.4；v0.2.0 扩展）。
 
 - ``client_connected``：进程归因（ProcessAttributor，源端口反查连接表）；
-- ``http_connect`` / ``tls_clienthello``：域名 blocklist 在 CONNECT/SNI 阶段阻断（02 文档 D5）；
+- ``http_connect`` / ``tls_start_client``：域名 blocklist 在 CONNECT/SNI 阶段阻断（02 文档 D5）；
 - ``request``：构建事件 + 五维求值；enforce 且 verdict=block 时合成 403（请求不到目标），
   dry-run 只告警；引擎异常按 fail_open 放行并记 error；
-- ``response`` / ``error``：补全事件并 JSONL 直写（每条流一行，见 docs/notes/decisions.md D5）。
+- ``response``：补全响应字段后落盘（每条流一行，docs/notes/decisions.md D5）。
+  v0.2.0（05 文档波次二 §3）：响应体先经 :meth:`AuditPipeline.evaluate_response`
+  做**注入特征标注**（action 恒 alert，绝不阻断响应）；verdict ≥ alert 且
+  ``policy.judge.enabled`` 时调用 :class:`LLMJudge` 做第二意见判定，任何异常
+  吞掉、结论记 ``judge_note``（judge 模块自身红线 1 亦保证绝不抛出）；
+- ``error``：补全事件并 JSONL 直写。
 
 引擎内任何异常一律捕获记日志（fail-open，不崩代理进程，03 文档 §3 错误处理）。
 """
@@ -21,8 +26,10 @@ from mitmproxy import connection, http, tls
 
 from aaa.attribution.table import ProcessAttributor
 from aaa.engine.pipeline import AuditPipeline, EvaluationInput
-from aaa.engine.verdict import MatchedRule
+from aaa.engine.verdict import ALERT, MatchedRule
+from aaa.judge import LLMJudge
 from aaa.notify.dispatcher import Dispatcher
+from aaa.notify.summary import build_summary
 from aaa.policy.model import action_rank
 from aaa.store.db import EventSink
 from aaa.store.decisions import DECISION_DENY, DecisionStore, decision_key
@@ -80,6 +87,22 @@ def _server_ip(flow: http.HTTPFlow) -> str | None:
     return None
 
 
+def _response_body(flow: http.HTTPFlow) -> bytes | None:
+    """取响应 body：优先解码后的 content，失败退回 raw_content。"""
+    if flow.response is None:
+        return None
+    try:
+        body = flow.response.content
+        if body is not None:
+            return body
+    except ValueError:
+        logger.debug("response content 解码失败，退回 raw_content: %s", flow.request.url)
+    try:
+        return flow.response.raw_content
+    except ValueError:
+        return None
+
+
 class AuditAddon:
     """把 mitmproxy 钩子转成审计事件：归因 → 求值 → 阻断/告警 → 落盘。"""
 
@@ -94,6 +117,7 @@ class AuditAddon:
         pinned_process: ProcessInfo | None = None,
         decisions: DecisionStore | None = None,
         dispatcher: Dispatcher | None = None,
+        judge: LLMJudge | None = None,
     ) -> None:
         self.events = events
         self.evidence = evidence
@@ -106,12 +130,19 @@ class AuditAddon:
         self.decisions = decisions
         #: 告警通知调度器（04 文档 §5：可选注入，None 时完全跳过——既有测试零改动兼容）
         self.dispatcher = dispatcher
+        #: LLM 辅助判定器（05 文档波次二 §3：可选注入，None 时完全跳过；
+        #: 只有 ``judge.config.enabled`` 为真才会真正调用）
+        self.judge = judge
         #: client_connected 已见的连接数
         self.connections_seen = 0
         #: 归因未命中（unknown）的事件计数
         self.unknown_attribution_count = 0
         #: 已入队通知的事件计数
         self.notified_count = 0
+        #: 响应侧注入标注的事件计数（v0.2.0 观测指标）
+        self.response_annotated_count = 0
+        #: 已做 LLM 判定的事件计数（v0.2.0 观测指标）
+        self.judged_count = 0
         self._pending: dict[str, AuditEvent] = {}
         #: 连接对象 → 归因结果（client_connected 时点查，源端口时效性，02 文档 D2）
         self._conn_process: weakref.WeakKeyDictionary[connection.Client, ProcessInfo] = (
@@ -193,7 +224,11 @@ class AuditAddon:
             logger.exception("audit addon request 钩子异常（fail-open）")
 
     def response(self, flow: http.HTTPFlow) -> None:
-        """响应阶段：补全响应字段后落盘；达到通知门槛的事件入队（04 文档 §5）。"""
+        """响应阶段：补全响应字段 → 响应侧注入标注（v0.2.0）→ LLM 判定 → 落盘。
+
+        达到通知门槛的事件入队（04 文档 §5）。响应侧只做 alert 级标注，绝不阻断、
+        绝不修改响应内容（05 文档波次二 §3）。
+        """
         try:
             event = self._pending.pop(flow.id, None) or self._build_request_event(flow)
             if flow.response is not None:
@@ -202,6 +237,8 @@ class AuditAddon:
                     size=len(flow.response.raw_content or b""),
                     content_type=flow.response.headers.get("content-type"),
                 )
+            self._annotate_response(flow, event)
+            self._maybe_judge(event)
             self.events.append(event)
             self._maybe_notify(event)
         except Exception:
@@ -231,6 +268,79 @@ class AuditAddon:
         if self.pipeline is None:
             return False
         return self.pipeline.policy.mode == "enforce"
+
+    # ------------------------------------------------------- response 侧（v0.2.0）
+
+    def _annotate_response(self, flow: http.HTTPFlow, event: AuditEvent) -> None:
+        """响应体注入特征标注（05 文档波次二 §3）：action 恒 alert，绝不阻断。
+
+        - 无管线或策略未配 response 规则时零开销跳过（evaluate_response 返回空）；
+        - 命中 → 注入规则进 ``matched_rules``（dim=response），verdict 只在低于
+          alert 时抬到 alert（绝不抬高到 confirm/block，也不降低既有更高级判定）；
+        - 任何异常 fail-open（响应钩子外层也有兜底，这里保证计数一致）。
+        """
+        if self.pipeline is None:
+            return
+        try:
+            finding = self.pipeline.evaluate_response(_response_body(flow))
+        except Exception:  # noqa: BLE001 - 响应侧标注 fail-open
+            logger.exception("响应侧求值异常（fail-open）")
+            return
+        if not finding.has_findings:
+            return
+        event.matched_rules = [
+            *event.matched_rules,
+            *[m.to_dict() for m in finding.matched],
+        ]
+        if action_rank(event.verdict) < action_rank(ALERT):
+            event.verdict = ALERT
+        self.response_annotated_count += 1
+        logger.info(
+            "响应注入标注：%s%s（%d 条规则，仅 alert 级）",
+            event.request.method,
+            event.request.path,
+            len(finding.matched),
+        )
+
+    def _maybe_judge(self, event: AuditEvent) -> None:
+        """verdict ≥ alert 且 ``judge.enabled`` 时调 LLMJudge（05 文档波次二 §3）。
+
+        - 摘要复用通知同一脱敏核心（``build_summary``）：命中密钥先打码再外发给
+          LLM——judge 红线 3 要求调用方脱敏，这里就是落点；
+        - judge 自身任何异常收敛为非 ok 结论（W3 红线 1），本方法再兜一层
+          try/except（摘要构建/对象状态异常也吞掉），结论（含非 ok 状态）如实记
+          ``judge_note``——绝不向审计主流程抛出、绝不影响落盘。
+        """
+        if self.judge is None:
+            return
+        try:
+            if not self.judge.config.enabled:
+                return
+            if action_rank(event.verdict) < action_rank(ALERT):
+                return
+            summary = build_summary(event).text
+            verdict = self.judge.judge(summary)
+            event.judge_note = verdict.model_dump(mode="json")
+            self.judged_count += 1
+            if verdict.is_ok:
+                logger.info(
+                    "LLM 判定：%s（置信度 %.2f）：%s",
+                    "违规" if verdict.is_violation else "未见违规",
+                    verdict.confidence,
+                    verdict.reason,
+                )
+            else:
+                logger.info("LLM 判定不可用（%s）：%s", verdict.status, verdict.reason)
+        except Exception:  # noqa: BLE001 - judge 绝不影响审计主流程（红线 1 兜底）
+            logger.exception("LLM 判定调用异常（吞掉，不影响审计）")
+
+    def judge_stats(self) -> dict[str, Any]:
+        """判定/响应标注统计（诊断用）。"""
+        return {
+            "response_annotated": self.response_annotated_count,
+            "judged": self.judged_count,
+            "judge_enabled": bool(self.judge is not None and self.judge.config.enabled),
+        }
 
     def _process_for_flow(self, flow: http.HTTPFlow) -> ProcessInfo | None:
         """事件归因：pinned（local --pid/--process）> 连接缓存 > 现场反查。"""

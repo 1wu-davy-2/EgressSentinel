@@ -18,6 +18,9 @@ DIM_PROCESS = "process"
 DIM_CONTENT = "content"
 DIM_VOLUME = "volume"
 DIM_TIME_WINDOW = "time_window"
+DIM_RESPONSE = "response"
+"""响应侧维度（05 文档波次二 §2/§3）：响应体注入特征标注；action 恒为 alert，
+绝不阻断响应（decisions.md D-2026-10-24-39）。"""
 
 
 @dataclass(frozen=True)

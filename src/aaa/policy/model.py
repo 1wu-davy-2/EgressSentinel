@@ -14,6 +14,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aaa.judge.llm import JudgeConfig
 from aaa.notify.model import NotifyConfig, disabled_notify_config
 
 #: 四级动作（02 文档 D4：allow < alert < confirm < block）
@@ -22,8 +23,15 @@ Action = Literal["allow", "alert", "confirm", "block"]
 #: 策略运行模式（03 文档 §0：默认 dry-run 只告警不阻断）
 PolicyMode = Literal["dry-run", "enforce"]
 
-#: 内置内容扫描器名单
-SCANNER_NAMES = ("secrets", "pii", "code_leak")
+#: 内置内容扫描器名单（v0.2.0 增 repo_fingerprint：仓库指纹比对，05 文档波次二 §2）
+SCANNER_NAMES = ("secrets", "pii", "code_leak", "repo_fingerprint")
+
+#: 响应侧规则的匹配档位（05 文档波次二 §1）：all=任何注入特征命中；high=仅高危命中
+ResponsePatterns = Literal["all", "high"]
+
+#: ``policy.judge`` 段直接复用 W3 的 :class:`JudgeConfig`（extra=forbid、默认全关，
+#: 字段与 05 文档 W3 一一对应：enabled/api_base/model/timeout/max_events_per_day）。
+JudgeSection = JudgeConfig
 
 _ACTION_ORDER: dict[str, int] = {"allow": 0, "alert": 1, "confirm": 2, "block": 3}
 
@@ -107,7 +115,7 @@ class ContentMatch(_Strict):
 
 class ContentRule(_Strict):
     id: str
-    scanner: Literal["secrets", "pii", "code_leak"] | None = None
+    scanner: Literal["secrets", "pii", "code_leak", "repo_fingerprint"] | None = None
     match: ContentMatch = Field(default_factory=ContentMatch)
     action: Action = "alert"
     weight: int = Field(default=0, ge=0, le=100)
@@ -147,12 +155,65 @@ class ProcessesSection(_Strict):
 
 
 class ContentSection(_Strict):
-    scanners: list[Literal["secrets", "pii", "code_leak"]] = Field(default_factory=list)
+    scanners: list[Literal["secrets", "pii", "code_leak", "repo_fingerprint"]] = Field(
+        default_factory=list
+    )
     rules: list[ContentRule] = Field(default_factory=list)
 
 
+# ---------------------------------------------------------------------------
+# v0.2.0 安全深化新段（05 文档波次二 §1）：全部默认关/空——缺省段落行为与
+# v0.1.x 完全一致（老策略文件无这些段也合法，升级零惊扰）。
+# ---------------------------------------------------------------------------
+
+
+class FingerprintSection(_Strict):
+    """``policy.fingerprint`` 段：本地仓库指纹比对（05 文档 W1/波次二）。
+
+    - ``enabled``：默认关闭——只有显式开启后才会把请求体与本地代码库切片比对；
+    - ``repos``：仓库工作区路径清单（``aaa fingerprint build --repo PATH`` 逐个
+      建库时缺省读取）；建库是显式 CLI 动作，``run`` 绝不自动扫描仓库；
+    - ``min_hits``：命中多少片算一次有效命中（默认 1，05 文档"命中 ≥1 片"）。
+    """
+
+    enabled: bool = False
+    repos: list[str] = Field(default_factory=list)
+    min_hits: int = Field(default=1, ge=1)
+
+
+class ResponseRule(_Strict):
+    """一条响应侧标注规则（05 文档波次二 §1）。
+
+    - ``patterns``：``all``（任何注入特征命中即标注）| ``high``（仅 high 严重度
+      ——指令覆盖/隐藏载体——命中才标注）；
+    - ``action``：恒为 ``alert``——响应侧只做 alert 级标注、绝不阻断响应
+      （05 文档波次二 §3 红线，在 schema 层固化：写 block/confirm 直接校验失败）。
+    """
+
+    id: str
+    patterns: ResponsePatterns = "all"
+    action: Literal["alert"] = "alert"
+
+
+class ResponseSection(_Strict):
+    """``policy.response`` 段：响应侧注入特征标注规则清单（空 = 功能关闭）。"""
+
+    rules: list[ResponseRule] = Field(default_factory=list)
+
+
+class EncryptSection(_Strict):
+    """``policy.encrypt`` 段：证据静态加密开关（05 文档 W5/波次二）。
+
+    默认关闭（向后兼容）：关闭时写入明文，读取仍透明兼容既有密文（密钥来源
+    解析见 ``store.crypto.CryptoEngine``）；开关在 ``aaa run`` 启动时生效，
+    运行中热更新不改变密钥状态（decisions.md D-2026-10-24-39）。
+    """
+
+    enabled: bool = False
+
+
 class PolicyDocument(_Strict):
-    """策略文档根模型（02 文档 §5 + 04 文档 §2 通知段）。"""
+    """策略文档根模型（02 文档 §5 + 04 文档 §2 通知段 + 05 文档安全深化段）。"""
 
     version: int = 1
     mode: PolicyMode = "dry-run"
@@ -165,6 +226,14 @@ class PolicyDocument(_Strict):
     notifications: NotifyConfig = Field(default_factory=disabled_notify_config)
     """通知配置（04 文档 §2）。缺省段落=全关（老策略文件兼容，04 文档 §3 T1）；
     段落存在但省略字段时按 ``NotifyConfig`` 字段级出厂默认（toast 开、webhook/email 关）。"""
+    fingerprint: FingerprintSection = Field(default_factory=FingerprintSection)
+    """仓库指纹段（05 文档波次二 §1）。缺省=关闭（不建库、不比对）。"""
+    judge: JudgeSection = Field(default_factory=lambda: JudgeSection())
+    """LLM 辅助判定段（05 文档 W3 ``JudgeConfig`` 直接复用）。缺省=关闭（零外发）。"""
+    response: ResponseSection = Field(default_factory=ResponseSection)
+    """响应侧标注段（05 文档波次二 §1）。缺省 rules=[] = 不扫描响应体。"""
+    encrypt: EncryptSection = Field(default_factory=EncryptSection)
+    """证据加密段（05 文档 W5）。缺省=关闭（写明文，读透明兼容密文）。"""
 
     # ------------------------------------------------------------- 派生工具
 
