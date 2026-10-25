@@ -923,3 +923,24 @@
   test_v030_experience_e2e.py（6 例）；全量套件与 ruff 结果见提交时的验收记录。
 
 
+## D-2026-10-24-49 仓库许可证落位：PolyForm Noncommercial 1.0.0（可免费使用，禁止商用）
+
+- 日期：2026-10-24；范围：LICENSE / pyproject / README / 官网两页 / 本决策记录。
+- **选型**：需求为「可下载使用、禁止商用」。放弃 CC BY-NC 4.0（Creative Commons
+  官方不建议用于软件）；采用 PolyForm Noncommercial 1.0.0（专为软件设计的非商用
+  协议，GitHub 可自动识别）。允许：任何非商业目的的使用/修改/再分发（含个人研究、
+  爱好项目，及慈善/教育/公共科研/公共安全卫生/环保/政府机构）；禁止：一切商业用途
+  （销售、商业授权、作为服务提供等），商用须另行书面授权。
+- **Required Notice**：LICENSE 内以协议规定的 ``Required Notice:`` 机制声明
+  ``Copyright (c) 2026 EgressSentinel contributors``，随再分发强制传递。
+- **第三方边界**：mitmproxy/typer/pydantic 等依赖保持各自 MIT/BSD 原协议（MIT 允许
+  与非商用上层协议叠加分发）；PolyForm NC 仅约束本项目自有代码。README「许可证」
+  章节明示该边界。
+- **同步修改**：pyproject ``license = PolyForm-Noncommercial-1.0.0``；官网
+  index.html 的 meta description / OG / JSON-LD（license 指向
+  polyformproject.org）/ stat 卡 / FAQ / 页脚共 11 处与 vibe.html 页脚，由 MIT
+  声明改为非商用表述；README 加 License 徽章与章节。
+- 影响：GitHub 仓库页将显示 "PolyForm Noncommercial 1.0.0"（非 OSI 开源，属
+  source-available）；SEO 文案同步更新。
+
+

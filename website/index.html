@@ -9,7 +9,7 @@
 
 <!-- ===== SEO 词条：让搜索引擎/浏览器能搜到 ===== -->
 <title>EgressSentinel 出口哨兵 · AI Agent 出口流量审计与阻断工具 | AI Agent Egress Traffic Audit</title>
-<meta name="description" content="EgressSentinel（出口哨兵）是开源（MIT）的 AI 审计 / agent 审计工具：部署在本机的出口流量审计代理，还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发，防数据泄露。支持 Windows / Linux / macOS。An open-source AI agent audit proxy that inspects and blocks what AI agents send out.">
+<meta name="description" content="EgressSentinel（出口哨兵）是开源（PolyForm Noncommercial，可免费使用、禁止商用）的 AI 审计 / agent 审计工具：部署在本机的出口流量审计代理，还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发，防数据泄露。支持 Windows / Linux / macOS。An open-source AI agent audit proxy that inspects and blocks what AI agents send out.">
 <meta name="keywords" content="EgressSentinel,出口哨兵,AI审计,agent审计,AI 审计工具,AI Agent 审计,AI Agent 监控,AI Agent 流量审计,AI 编程工具监控,出口流量审计,外发流量监控,网络审计,流量监控,HTTPS 审计,抓包审计,代码外泄检测,代码泄露防护,代码防泄密,数据防泄密,数据防泄露,密钥泄露检测,密钥外发阻断,API key 泄露检测,.env 泄露,敏感信息检测,MITM 审计代理,mitmproxy,Claude Code 监控,Claude Code 安全,Cursor 流量审计,Codex 审计,Copilot 监控,Cline 审计,MCP 审计,MCP 安全,Windows 网络审计,开源 DLP,AI 安全,AI 治理,ai audit,agent audit,ai agent audit,ai agent monitor,egress traffic audit,code exfiltration detection,code leak prevention,secret leak detection,data loss prevention,LLM security,MITM audit proxy,open source DLP">
 <link rel="canonical" href="https://1wu-davy-2.github.io/EgressSentinel/">
 
@@ -17,7 +17,7 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="EgressSentinel 出口哨兵">
 <meta property="og:title" content="EgressSentinel 出口哨兵 · 你的 AI Agent 在往哪里发送你的代码？">
-<meta property="og:description" content="AI 审计 / agent 审计工具：本机部署的出口流量审计代理，HTTPS 明文级审计 · 进程归因 · 五维规则 · 事中阻断密钥与代码违规外发。开源 MIT。">
+<meta property="og:description" content="AI 审计 / agent 审计工具：本机部署的出口流量审计代理，HTTPS 明文级审计 · 进程归因 · 五维规则 · 事中阻断密钥与代码违规外发。开源可免用，禁止商用。">
 <meta property="og:url" content="https://1wu-davy-2.github.io/EgressSentinel/">
 <meta property="og:image" content="https://1wu-davy-2.github.io/EgressSentinel/icon-512.png">
 <meta property="og:locale" content="zh_CN">
@@ -34,12 +34,12 @@
   "@type": "SoftwareApplication",
   "name": "EgressSentinel",
   "alternateName": ["出口哨兵", "EgressSentinel 出口哨兵", "AI审计工具", "Agent审计工具", "AI Agent 出口流量审计工具"],
-  "description": "AI 审计 / agent 审计工具：MITM 还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。开源 MIT。",
+  "description": "AI 审计 / agent 审计工具：MITM 还原任意进程 HTTPS 明文、归因到进程、五维规则事中阻断密钥与代码违规外发。开源可免用，禁止商用。",
   "keywords": "AI审计, agent审计, AI Agent 审计, AI Agent 流量监控, 代码外泄检测, 代码防泄密, 密钥泄露检测, 数据防泄密, MITM 审计, 开源 DLP, MCP 审计, ai agent audit, egress audit, code exfiltration",
   "applicationCategory": "SecurityApplication",
   "operatingSystem": "Windows, Linux, macOS",
   "programmingLanguage": "Python",
-  "license": "https://opensource.org/licenses/MIT",
+  "license": "https://polyformproject.org/licenses/noncommercial/1.0.0",
   "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"},
   "inLanguage": ["zh-CN", "en"],
   "author": {"@type": "Person", "name": "1wu-davy-2"},
@@ -54,7 +54,7 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    {"@type": "Question", "name": "EgressSentinel 是免费的吗？数据会上传到哪里？", "acceptedAnswer": {"@type": "Answer", "text": "MIT 协议开源、完全免费。纯本地运行：事件库与证据只写在本机 data/ 目录，保留期可配，没有任何遥测或云端组件。"}},
+    {"@type": "Question", "name": "EgressSentinel 是免费的吗？数据会上传到哪里？", "acceptedAnswer": {"@type": "Answer", "text": "PolyForm Noncommercial 协议开源：免费下载使用，禁止商用。纯本地运行：事件库与证据只写在本机 data/ 目录，保留期可配，没有任何遥测或云端组件。"}},
     {"@type": "Question", "name": "它能审计哪些 AI 工具？算是 AI 审计 / agent 审计工具吗？", "acceptedAnswer": {"@type": "Answer", "text": "是的，EgressSentinel 是面向本机的 AI 审计 / agent 审计工具：Claude Code、Cursor、Codex、GitHub Copilot、Cline、Windsurf 等编程 Agent、MCP 服务乃至任意联网程序都可审计，不挑工具、无需接入 SDK。"}},
     {"@type": "Question", "name": "为什么某个 AI Agent 的流量没被捕获？", "acceptedAnswer": {"@type": "Answer", "text": "Node.js 系工具默认不读系统代理和 Windows 证书库。执行 aaa setup env（注入 NODE_USE_ENV_PROXY / NODE_EXTRA_CA_CERTS 等）并重启该 Agent 进程即可；Python 系对应 REQUESTS_CA_BUNDLE。"}},
     {"@type": "Question", "name": "它会拖慢我的网络吗？", "acceptedAnswer": {"@type": "Answer", "text": "regular 模式是本地回环代理，无云端往返；内容扫描默认只处理每个请求的前 256KB；非审计目标域名跳过 body 扫描。"}},
@@ -404,7 +404,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
     <div class="stat"><div class="n grad-text">650+</div><div class="l" data-i18n="stat.t1">自动化测试全绿</div></div>
     <div class="stat"><div class="n grad-text">43</div><div class="l" data-i18n="stat.t2">密钥检测规则（gitleaks 移植）</div></div>
     <div class="stat"><div class="n grad-text">5</div><div class="l" data-i18n="stat.t3">发布平台（Linux/macOS/Windows × amd64/arm64）</div></div>
-    <div class="stat"><div class="n grad-text">MIT</div><div class="l" data-i18n="stat.t4">开源协议 · 证据不出本机</div></div>
+    <div class="stat"><div class="n grad-text">NC-1.0</div><div class="l" data-i18n="stat.t4">非商用许可 · 证据不出本机</div></div>
   </div>
 </div>
 
@@ -614,7 +614,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
     <div class="faq">
       <details open>
         <summary data-i18n="faq.q1">EgressSentinel 是免费的吗？数据会上传到哪里？</summary>
-        <div class="a" data-i18n="faq.a1">MIT 协议开源、完全免费。纯本地运行：事件库与证据只写在本机 <code>data/</code> 目录，保留期可配（<code>aaa trim</code>），没有任何遥测或云端组件。</div>
+        <div class="a" data-i18n="faq.a1">PolyForm Noncommercial 协议开源：免费下载使用，禁止商用。纯本地运行：事件库与证据只写在本机 <code>data/</code> 目录，保留期可配（<code>aaa trim</code>），没有任何遥测或云端组件。</div>
       </details>
       <details>
         <summary data-i18n="faq.q0">它能审计哪些 AI 工具？算是 AI 审计 / agent 审计工具吗？</summary>
@@ -732,7 +732,7 @@ footer{border-top:1px solid var(--border);padding:56px 0 32px;background:var(--c
       </div>
     </div>
     <div class="foot-note">
-      <span data-i18n="foot.copyright">© 2026 EgressSentinel · MIT 协议开源 · 仅用于授权设备 · 证据不离开本机</span>
+      <span data-i18n="foot.copyright">© 2026 EgressSentinel · PolyForm-NC 非商用开源 · 仅用于授权设备 · 证据不离开本机</span>
       <span data-i18n="foot.verified">页面内容与仓库代码逐项核对（CLI 命令 / 规则数 / 平台产物）</span>
     </div>
   </div>
@@ -792,7 +792,7 @@ var I18N_EN = {
   "term.ev3": "secret-leak matched AKIA**** · blocked with 403",
   "term.ev4": "code-bulk-upload 512KB body · awaiting confirmation",
   "stat.t1": "automated tests green", "stat.t2": "secret-detection rules (ported from gitleaks)",
-  "stat.t3": "release platforms (Linux/macOS/Windows × amd64/arm64)", "stat.t4": "open-source license · evidence stays local",
+  "stat.t3": "release platforms (Linux/macOS/Windows × amd64/arm64)", "stat.t4": "noncommercial license · evidence stays local",
   "why.eyebrow": "Why you need it",
   "why.h2a": "AI agents can read all your code —", "why.h2b": "who is watching their ", "why.h2c": "network exit", "why.h2d": "?",
   "why.p": "Claude Code, Cursor, Codex, MCP servers… they can read your repos and .env files, while every HTTPS request they send is invisible to you. Existing solutions each miss a piece:",
@@ -853,7 +853,7 @@ var I18N_EN = {
   "mq.p": "Event stream taken from the project's E2E test scenarios (tests/e2e) — not real traffic",
   "faq.eyebrow": "FAQ", "faq.h2": "Questions? Answered.",
   "faq.q1": "Is EgressSentinel free? Where does my data go?",
-  "faq.a1": "Open source under MIT, completely free. It runs locally: the event store and evidence stay in the local <code>data/</code> directory with configurable retention (<code>aaa trim</code>) — no telemetry, no cloud components.",
+  "faq.a1": "Open source under PolyForm Noncommercial: free to download and use, commercial use prohibited. It runs locally: the event store and evidence stay in the local <code>data/</code> directory with configurable retention (<code>aaa trim</code>) — no telemetry, no cloud components.",
   "faq.q0": "Which AI tools can it audit? Is it an AI audit / agent audit tool?",
   "faq.a0": "Yes — EgressSentinel is a local <b>AI audit / agent audit</b> tool: anything that goes through the local proxy can be audited. Coding agents like Claude Code, Cursor, Codex, GitHub Copilot, Cline and Windsurf, MCP servers, and any networked program — tool-agnostic, no SDK integration. Typical use cases: auditing whether AI coding tools secretly upload code / .env / API keys, for code-leak and data-loss prevention.",
   "faq.q2": "Why isn't a certain AI agent's traffic captured?",
@@ -874,7 +874,7 @@ var I18N_EN = {
   "foot.h1": "Product", "foot.dl": "Download", "foot.h2": "Resources",
   "foot.doc1": "Research report", "foot.doc2": "Technical design", "foot.doc3": "Decision log",
   "foot.h3": "Community", "foot.issue": "Issues", "foot.changelog": "Changelog",
-  "foot.copyright": "© 2026 EgressSentinel · MIT open source · authorized devices only · evidence never leaves your machine",
+  "foot.copyright": "© 2026 EgressSentinel · PolyForm-NC noncommercial open source · authorized devices only · evidence never leaves your machine",
   "foot.verified": "Page content verified against the repository (CLI commands / rule count / platform builds)"
 };
 (function(){

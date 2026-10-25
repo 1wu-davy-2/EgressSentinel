@@ -8,7 +8,7 @@ version = "0.3.0"
 description = "EgressSentinel（出口哨兵，原名 AI-AGENT-AUDIT）：本机 AI Agent 外发流量审计工具（Windows 优先）"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [{ name = "EgressSentinel contributors" }]
 dependencies = [
     "mitmproxy>=10.2",

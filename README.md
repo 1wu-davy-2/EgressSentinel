@@ -3,6 +3,7 @@
 [![CI](https://github.com/1wu-davy-2/EgressSentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/1wu-davy-2/EgressSentinel/actions/workflows/ci.yml)
 [![Build](https://github.com/1wu-davy-2/EgressSentinel/actions/workflows/build.yml/badge.svg)](https://github.com/1wu-davy-2/EgressSentinel/actions/workflows/build.yml)
 [![官网](https://img.shields.io/badge/官网-GitHub_Pages-2ea44f)](https://1wu-davy-2.github.io/EgressSentinel/)
+[![License: PolyForm NC](https://img.shields.io/badge/License-PolyForm--NC--1.0.0-blue)](LICENSE)
 
 > 本机 AI Agent 与应用程序外发流量审计系统（Windows 优先）。原名 AI-AGENT-AUDIT；Python 包与 CLI 仍为 `aaa`，可执行文件仍为 `ai-agent-audit`。
 
@@ -425,3 +426,9 @@ aaa teardown              # 按改动日志逆序幂等还原：删除 CA（按�
 - 仅用于审计**自己拥有或被明确授权管理**的计算机。抓取本机 HTTPS 明文属于高权限监控行为，部署到他人设备前必须获得授权。
 - 证据库含敏感信息：默认仅本地存储、UI 默认脱敏展示、保留期可配。
 - 安装根证书对应 MITRE ATT&CK T1553.004，可能触发杀软/EDR 告警；工具不隐藏自身行为，并提供**完整卸载**（移除 CA、还原代理设置、删除防火墙规则）。
+
+## 许可证
+
+**本项目自有代码与二进制产物采用 [PolyForm Noncommercial License 1.0.0](LICENSE)**：任何人可**免费下载、使用、修改和再分发**（保留协议与版权声明），但**仅限非商业用途**——个人学习研究、爱好项目，以及慈善组织、教育机构、公共科研/安全/卫生/环保组织和政府机构的使用均属允许范围；**将本软件用于任何商业目的（含销售、商业授权、作为付费服务提供）须另行取得书面授权**。
+
+内嵌的第三方组件仍遵循其各自的原协议：mitmproxy、typer、pydantic、pyyaml、psutil 等为 MIT/BSD（见各自包内声明），本协议仅约束本项目自有代码。
