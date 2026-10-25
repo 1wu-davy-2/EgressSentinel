@@ -134,3 +134,22 @@ jobs:
         with:
           files: dist/egress-sentinel-setup-*.exe
           fail_on_unmatched_files: true
+
+  # 文档打包（调研/设计/执行计划/决策日志）：仅 tag 触发，
+  # scripts/package_docs.py 产出 EgressSentinel-docs-v<版本>.zip 挂到同一 Release。
+  docs:
+    name: docs-bundle
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Package design & plan docs
+        run: python scripts/package_docs.py
+      - name: Upload docs bundle to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/EgressSentinel-docs-*.zip
+          fail_on_unmatched_files: true
